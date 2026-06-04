@@ -1,0 +1,388 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// ignore_for_file: avoid_print, avoid_escaping_inner_quotes
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+void showUsageAndExit() {
+  print('Usage: dart run_driver_test.dart [options]');
+  print('Required:');
+  print(
+    '  --package-dir <path>             Path to package directory (e.g. dev/integration_tests/android_hardware_smoke_test)',
+  );
+  print(
+    '  --driver <path>                  Relative path to the test driver file (e.g. test_driver/driver_test.dart)',
+  );
+  print(
+    '  --target <path>                  Relative path to the target dart entrypoint (e.g. lib/main.dart)',
+  );
+  print('Optional:');
+  print(
+    '  --recreate-platform <platforms>  Comma-separated list of platforms to recreate before running (e.g. android or android,ios)',
+  );
+  print('  --update-goldens                 Set UPDATE_GOLDENS=1 env variable');
+  print(
+    '  --android-impeller-backend <v>   Configure Impeller backend in AndroidManifest.xml (vulkan or opengles)',
+  );
+  print('  --no-dds                         Disable Dart Development Service (adds --no-dds)');
+  exit(1);
+}
+
+String? getOption(List<String> args, String name) {
+  final int index = args.indexOf(name);
+  if (index != -1 && index + 1 < args.length) {
+    return args[index + 1];
+  }
+  return null;
+}
+
+bool hasFlag(List<String> args, String name) {
+  return args.contains(name);
+}
+
+Future<void> recreatePlatforms(String packageDir, String recreatePlatformStr) async {
+  final List<String> platforms = recreatePlatformStr
+      .split(',')
+      .map((String p) => p.trim())
+      .where((String p) => p.isNotEmpty)
+      .toList();
+
+  for (final platform in platforms) {
+    print('🔧 Recreating platform boilerplate for: $platform...');
+    final ProcessResult result = await Process.run('flutter', <String>[
+      'create',
+      '--platform',
+      platform,
+      '--no-overwrite',
+      '.',
+    ], workingDirectory: packageDir);
+    if (result.exitCode != 0) {
+      stderr.writeln('❌ Failed to recreate platform "$platform":\n${result.stderr}');
+      exit(result.exitCode);
+    }
+  }
+}
+
+Future<String?> setAndroidImpellerBackend(String packageDir, String backend) async {
+  final manifestFile = File('$packageDir/android/app/src/main/AndroidManifest.xml');
+  if (!manifestFile.existsSync()) {
+    stderr.writeln(
+      '⚠️ AndroidManifest.xml not found at ${manifestFile.path}. Skipping backend configuration.',
+    );
+    return null;
+  }
+
+  final String originalContent = await manifestFile.readAsString();
+
+  final metadataPattern = RegExp(
+    r'(<meta-data\s+android:name="io\.flutter\.embedding\.android\.ImpellerBackend"\s+android:value=")[^"]*("\s*/>)',
+  );
+
+  final newMetadataTag =
+      '<meta-data android:name="io.flutter.embedding.android.ImpellerBackend" android:value="$backend" />';
+
+  String modifiedContent;
+  if (metadataPattern.hasMatch(originalContent)) {
+    modifiedContent = originalContent.replaceAllMapped(metadataPattern, (Match match) {
+      return '${match.group(1)}$backend${match.group(2)}';
+    });
+  } else {
+    final applicationPattern = RegExp(r'(<application[^>]*>)');
+    if (!applicationPattern.hasMatch(originalContent)) {
+      stderr.writeln(
+        '⚠️ Could not find <application> block in AndroidManifest.xml. Skipping backend configuration.',
+      );
+      return null;
+    }
+    modifiedContent = originalContent.replaceFirst(
+      applicationPattern,
+      '\$1\n        $newMetadataTag',
+    );
+  }
+
+  print('📝 Configuring AndroidManifest.xml: set Impeller backend to "$backend"');
+  await manifestFile.writeAsString(modifiedContent);
+  return originalContent;
+}
+
+Future<void> restoreAndroidManifest(String packageDir, String originalContent) async {
+  final manifestFile = File('$packageDir/android/app/src/main/AndroidManifest.xml');
+  if (!manifestFile.existsSync()) {
+    return;
+  }
+  print('📝 Restoring original AndroidManifest.xml...');
+  await manifestFile.writeAsString(originalContent);
+}
+
+Future<String?> getPackageId(String packageDir) async {
+  final ktsGradle = File('$packageDir/android/app/build.gradle.kts');
+  if (ktsGradle.existsSync()) {
+    final String content = await ktsGradle.readAsString();
+    final RegExpMatch? match = RegExp(r'applicationId\s*=\s*"([^"]+)"').firstMatch(content);
+    if (match != null) {
+      return match.group(1);
+    }
+  }
+
+  final groovyGradle = File('$packageDir/android/app/build.gradle');
+  if (groovyGradle.existsSync()) {
+    final String content = await groovyGradle.readAsString();
+    final RegExpMatch? match = RegExp(
+      r'''applicationId\s*(?:=\s*)?["']([^"']+)["']''',
+    ).firstMatch(content);
+    if (match != null) {
+      return match.group(1);
+    }
+  }
+
+  final manifestFile = File('$packageDir/android/app/src/main/AndroidManifest.xml');
+  if (manifestFile.existsSync()) {
+    final String content = await manifestFile.readAsString();
+    final RegExpMatch? match = RegExp(r'package="([^"]+)"').firstMatch(content);
+    if (match != null) {
+      return match.group(1);
+    }
+  }
+
+  return null;
+}
+
+Future<bool> isAppRunning(String packageId) async {
+  final ProcessResult result = await Process.run('adb', <String>['shell', 'pidof', packageId]);
+  return result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty;
+}
+
+Future<void> runDeviceDiagnostics() async {
+  final ProcessResult modelResult = await Process.run('adb', <String>[
+    'shell',
+    'getprop',
+    'ro.product.model',
+  ]);
+  final ProcessResult vulkanResult = await Process.run('adb', <String>[
+    'shell',
+    'getprop',
+    'ro.hardware.vulkan',
+  ]);
+  final ProcessResult glesResult = await Process.run('adb', <String>[
+    'shell',
+    'getprop',
+    'ro.opengles.version',
+  ]);
+
+  final String model = modelResult.stdout.toString().trim();
+  final String vulkanDriver = vulkanResult.stdout.toString().trim();
+  final String glesVersionRaw = glesResult.stdout.toString().trim();
+
+  var glesVersion = 'Unknown';
+  if (glesVersionRaw.isNotEmpty) {
+    final int? parsed = int.tryParse(glesVersionRaw);
+    if (parsed != null) {
+      final int major = parsed >> 16;
+      final int minor = (parsed >> 8) & 0xFF;
+      glesVersion = '$major.$minor';
+    }
+  }
+
+  print('\n📱 Connected Device Diagnostics:');
+  print('   - Model: $model');
+  print('   - Vulkan Driver: ${vulkanDriver.isEmpty ? "None detected" : vulkanDriver}');
+  print('   - OpenGL ES: $glesVersion');
+
+  if (vulkanDriver == 'ranchu' || model.toLowerCase().contains('emulator')) {
+    print('   - Environment: Android Emulator');
+    print('   ⚠️  Warning: Vulkan graphics context initialization frequently fails on emulators.');
+    print(
+      '      If the test run fails or hangs, run again with: --android-impeller-backend opengles\n',
+    );
+  } else {
+    print('   - Environment: Physical Android Hardware\n');
+  }
+}
+
+Future<int> runTest(
+  String packageDir,
+  String driver,
+  String target,
+  bool updateGoldens,
+  bool noDds,
+) async {
+  final env = <String, String>{...Platform.environment};
+  if (updateGoldens) {
+    env['UPDATE_GOLDENS'] = '1';
+    print('📸 Running test with UPDATE_GOLDENS=1 environment variable set.');
+  }
+
+  final cmdArgs = <String>['drive', '-v', '--driver=$driver', '--target=$target'];
+  if (noDds) {
+    cmdArgs.add('--no-dds');
+  }
+
+  print('🚀 Running command: flutter ${cmdArgs.join(' ')} inside $packageDir');
+
+  final Process process = await Process.start(
+    'flutter',
+    cmdArgs,
+    workingDirectory: packageDir,
+    environment: env,
+  );
+
+  final String? packageId = await getPackageId(packageDir);
+  final crashPattern = RegExp(
+    r'(FATAL:flutter|Check failed:|Could not create Vulkan instance|Could not create surface from invalid Android context)',
+    caseSensitive: false,
+  );
+
+  var didCrash = false;
+  Timer? monitoringTimer;
+  Timer? warningTimeoutTimer;
+
+  void checkSuccessLine(String line) {
+    if (line.contains('Connected to Flutter application') ||
+        line.contains('00:00 +0:') ||
+        line.contains('setUpAll')) {
+      warningTimeoutTimer?.cancel();
+      warningTimeoutTimer = null;
+    }
+  }
+
+  if (packageId != null) {
+    var hasStarted = false;
+    var consecutiveDeadTicks = 0;
+
+    monitoringTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      final bool running = await isAppRunning(packageId);
+      if (running) {
+        hasStarted = true;
+        consecutiveDeadTicks = 0;
+      } else if (hasStarted) {
+        consecutiveDeadTicks++;
+        // If the app process has been dead for 3 consecutive checks (6 seconds)
+        // while the flutter drive process is still active, it has crashed/hung.
+        if (consecutiveDeadTicks >= 3 && !didCrash) {
+          didCrash = true;
+          stderr.writeln(
+            '\n❌ [Proactive Crash Detection] The application process "$packageId" is no longer running on the device.',
+          );
+          stderr.writeln('❌ Terminating execution early to prevent infinite connection hang...\n');
+          process.kill();
+          timer.cancel();
+        }
+      }
+    });
+  }
+
+  final StreamSubscription<String>
+  stdoutSubscription = process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
+    String line,
+  ) {
+    print(line);
+    checkSuccessLine(line);
+
+    if (line.contains('It is taking an unusually long time to connect to the VM')) {
+      warningTimeoutTimer ??= Timer(const Duration(seconds: 8), () {
+        if (!didCrash) {
+          didCrash = true;
+          stderr.writeln(
+            '\n❌ [Proactive Hang Detection] VM Service connection has timed out (failed to connect within 8 seconds of warnings).',
+          );
+          stderr.writeln('❌ Terminating execution early to prevent infinite connection hang...\n');
+          process.kill();
+        }
+      });
+    }
+
+    if (crashPattern.hasMatch(line) && !didCrash) {
+      didCrash = true;
+      stderr.writeln('\n❌ [Proactive Crash Detection] Detected fatal engine crash signature.');
+      stderr.writeln('❌ Terminating execution early to prevent infinite connection hang...\n');
+      process.kill();
+    }
+  });
+
+  final StreamSubscription<String> stderrSubscription = process.stderr
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .listen((String line) {
+        stderr.writeln(line);
+        checkSuccessLine(line);
+        if (crashPattern.hasMatch(line) && !didCrash) {
+          didCrash = true;
+          stderr.writeln('\n❌ [Proactive Crash Detection] Detected fatal engine crash signature.');
+          stderr.writeln('❌ Terminating execution early to prevent infinite connection hang...\n');
+          process.kill();
+        }
+      });
+
+  await Future.wait<void>(<Future<void>>[
+    stdoutSubscription.asFuture(),
+    stderrSubscription.asFuture(),
+  ]);
+
+  monitoringTimer?.cancel();
+  warningTimeoutTimer?.cancel();
+  await stdoutSubscription.cancel();
+  await stderrSubscription.cancel();
+
+  final int exitCode = await process.exitCode;
+  return didCrash ? 1 : exitCode;
+}
+
+Future<void> main(List<String> args) async {
+  if (args.isEmpty || hasFlag(args, '--help') || hasFlag(args, '-h')) {
+    showUsageAndExit();
+  }
+
+  final String? parsedPackageDir = getOption(args, '--package-dir');
+  final String? parsedDriver = getOption(args, '--driver');
+  final String? parsedTarget = getOption(args, '--target');
+
+  if (parsedPackageDir == null || parsedDriver == null || parsedTarget == null) {
+    print('Error: Missing required arguments.');
+    showUsageAndExit();
+  }
+
+  final String packageDir = parsedPackageDir!;
+  final String driver = parsedDriver!;
+  final String target = parsedTarget!;
+
+  await runDeviceDiagnostics();
+
+  final String? recreatePlatform = getOption(args, '--recreate-platform');
+  final bool updateGoldens = hasFlag(args, '--update-goldens');
+  final String? backend = getOption(args, '--android-impeller-backend');
+  final bool noDds = hasFlag(args, '--no-dds');
+
+  if (backend != null && backend != 'vulkan' && backend != 'opengles') {
+    print('Error: Android Impeller backend must be either vulkan or opengles.');
+    showUsageAndExit();
+  }
+
+  if (recreatePlatform != null) {
+    await recreatePlatforms(packageDir, recreatePlatform);
+  }
+
+  String? originalManifest;
+  if (backend != null) {
+    originalManifest = await setAndroidImpellerBackend(packageDir, backend);
+  }
+
+  var exitCode = 1;
+  try {
+    exitCode = await runTest(packageDir, driver, target, updateGoldens, noDds);
+  } finally {
+    if (originalManifest != null) {
+      await restoreAndroidManifest(packageDir, originalManifest);
+    }
+    final String? packageId = await getPackageId(packageDir);
+    if (packageId != null) {
+      print('🧹 Cleaning up device state: force-stopping app "$packageId"...');
+      await Process.run('adb', <String>['shell', 'am', 'force-stop', packageId]);
+    }
+  }
+
+  exit(exitCode);
+}
