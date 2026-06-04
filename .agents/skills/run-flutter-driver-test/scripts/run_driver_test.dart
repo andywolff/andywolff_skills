@@ -67,57 +67,6 @@ Future<void> recreatePlatforms(String packageDir, String recreatePlatformStr) as
   }
 }
 
-Future<String?> setAndroidImpellerBackend(String packageDir, String backend) async {
-  final manifestFile = File('$packageDir/android/app/src/main/AndroidManifest.xml');
-  if (!manifestFile.existsSync()) {
-    stderr.writeln(
-      '⚠️ AndroidManifest.xml not found at ${manifestFile.path}. Skipping backend configuration.',
-    );
-    return null;
-  }
-
-  final String originalContent = await manifestFile.readAsString();
-
-  final metadataPattern = RegExp(
-    r'(<meta-data\s+android:name="io\.flutter\.embedding\.android\.ImpellerBackend"\s+android:value=")[^"]*("\s*/>)',
-  );
-
-  final newMetadataTag =
-      '<meta-data android:name="io.flutter.embedding.android.ImpellerBackend" android:value="$backend" />';
-
-  String modifiedContent;
-  if (metadataPattern.hasMatch(originalContent)) {
-    modifiedContent = originalContent.replaceAllMapped(metadataPattern, (Match match) {
-      return '${match.group(1)}$backend${match.group(2)}';
-    });
-  } else {
-    final applicationPattern = RegExp(r'(<application[^>]*>)');
-    if (!applicationPattern.hasMatch(originalContent)) {
-      stderr.writeln(
-        '⚠️ Could not find <application> block in AndroidManifest.xml. Skipping backend configuration.',
-      );
-      return null;
-    }
-    modifiedContent = originalContent.replaceFirst(
-      applicationPattern,
-      '\$1\n        $newMetadataTag',
-    );
-  }
-
-  print('📝 Configuring AndroidManifest.xml: set Impeller backend to "$backend"');
-  await manifestFile.writeAsString(modifiedContent);
-  return originalContent;
-}
-
-Future<void> restoreAndroidManifest(String packageDir, String originalContent) async {
-  final manifestFile = File('$packageDir/android/app/src/main/AndroidManifest.xml');
-  if (!manifestFile.existsSync()) {
-    return;
-  }
-  print('📝 Restoring original AndroidManifest.xml...');
-  await manifestFile.writeAsString(originalContent);
-}
-
 Future<String?> getPackageId(String packageDir) async {
   final ktsGradle = File('$packageDir/android/app/build.gradle.kts');
   if (ktsGradle.existsSync()) {
@@ -335,7 +284,35 @@ Future<void> main(List<String> args) async {
 
   String? originalManifest;
   if (backend != null) {
-    originalManifest = await setAndroidImpellerBackend(packageDir, backend);
+    try {
+      final String scriptPath = await File(Platform.script.toFilePath()).resolveSymbolicLinks();
+      final Directory scriptDir = File(scriptPath).parent;
+      final String configScript =
+          '${scriptDir.parent.parent.path}/configure-android-impeller-backend/scripts/configure_impeller_backend.dart';
+
+      if (File(configScript).existsSync()) {
+        final ProcessResult result = await Process.run('dart', <String>[
+          configScript,
+          '--package-dir',
+          packageDir,
+          '--action',
+          'set',
+          '--backend',
+          backend,
+        ]);
+        stderr.write(result.stderr);
+        final String output = result.stdout.toString().trim();
+        if (output.isNotEmpty) {
+          originalManifest = output;
+        }
+      } else {
+        print('Error: Sibling configuration script not found at $configScript');
+        exit(1);
+      }
+    } catch (e) {
+      print('Error configuring backend: $e');
+      exit(1);
+    }
   }
 
   var exitCode = 1;
@@ -343,7 +320,24 @@ Future<void> main(List<String> args) async {
     exitCode = await runTest(packageDir, driver, target, updateGoldens, noDds);
   } finally {
     if (originalManifest != null) {
-      await restoreAndroidManifest(packageDir, originalManifest);
+      try {
+        final String scriptPath = await File(Platform.script.toFilePath()).resolveSymbolicLinks();
+        final Directory scriptDir = File(scriptPath).parent;
+        final String configScript =
+            '${scriptDir.parent.parent.path}/configure-android-impeller-backend/scripts/configure_impeller_backend.dart';
+        final ProcessResult result = await Process.run('dart', <String>[
+          configScript,
+          '--package-dir',
+          packageDir,
+          '--action',
+          'restore',
+          '--backup-data',
+          originalManifest,
+        ]);
+        stderr.write(result.stderr);
+      } catch (e) {
+        print('Error restoring manifest: $e');
+      }
     }
     final String? packageId = await getPackageId(packageDir);
     if (packageId != null) {
