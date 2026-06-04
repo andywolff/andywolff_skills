@@ -156,53 +156,6 @@ Future<bool> isAppRunning(String packageId) async {
   return result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty;
 }
 
-Future<void> runDeviceDiagnostics() async {
-  final ProcessResult modelResult = await Process.run('adb', <String>[
-    'shell',
-    'getprop',
-    'ro.product.model',
-  ]);
-  final ProcessResult vulkanResult = await Process.run('adb', <String>[
-    'shell',
-    'getprop',
-    'ro.hardware.vulkan',
-  ]);
-  final ProcessResult glesResult = await Process.run('adb', <String>[
-    'shell',
-    'getprop',
-    'ro.opengles.version',
-  ]);
-
-  final String model = modelResult.stdout.toString().trim();
-  final String vulkanDriver = vulkanResult.stdout.toString().trim();
-  final String glesVersionRaw = glesResult.stdout.toString().trim();
-
-  var glesVersion = 'Unknown';
-  if (glesVersionRaw.isNotEmpty) {
-    final int? parsed = int.tryParse(glesVersionRaw);
-    if (parsed != null) {
-      final int major = parsed >> 16;
-      final int minor = (parsed >> 8) & 0xFF;
-      glesVersion = '$major.$minor';
-    }
-  }
-
-  print('\n📱 Connected Device Diagnostics:');
-  print('   - Model: $model');
-  print('   - Vulkan Driver: ${vulkanDriver.isEmpty ? "None detected" : vulkanDriver}');
-  print('   - OpenGL ES: $glesVersion');
-
-  if (vulkanDriver == 'ranchu' || model.toLowerCase().contains('emulator')) {
-    print('   - Environment: Android Emulator');
-    print('   ⚠️  Warning: Vulkan graphics context initialization frequently fails on emulators.');
-    print(
-      '      If the test run fails or hangs, run again with: --android-impeller-backend opengles\n',
-    );
-  } else {
-    print('   - Environment: Physical Android Hardware\n');
-  }
-}
-
 Future<int> runTest(
   String packageDir,
   String driver,
@@ -349,7 +302,22 @@ Future<void> main(List<String> args) async {
   final String driver = parsedDriver!;
   final String target = parsedTarget!;
 
-  await runDeviceDiagnostics();
+  try {
+    final String scriptPath = await File(Platform.script.toFilePath()).resolveSymbolicLinks();
+    final Directory scriptDir = File(scriptPath).parent;
+    final String diagnosticsScript =
+        '${scriptDir.parent.parent.path}/diagnose-android-device/scripts/device_diagnostics.dart';
+
+    if (File(diagnosticsScript).existsSync()) {
+      final ProcessResult result = await Process.run('dart', <String>[diagnosticsScript]);
+      stdout.write(result.stdout);
+      stderr.write(result.stderr);
+    } else {
+      print('Warning: Sibling diagnostics script not found at $diagnosticsScript');
+    }
+  } catch (e) {
+    print('Warning: Could not execute pre-flight device diagnostics: $e');
+  }
 
   final String? recreatePlatform = getOption(args, '--recreate-platform');
   final bool updateGoldens = hasFlag(args, '--update-goldens');
