@@ -288,7 +288,7 @@ Future<void> main(List<String> args) async {
       final String scriptPath = await File(Platform.script.toFilePath()).resolveSymbolicLinks();
       final Directory scriptDir = File(scriptPath).parent;
       final String configScript =
-          '${scriptDir.parent.parent.path}/configure-android-impeller-backend/scripts/configure_impeller_backend.dart';
+          '${scriptDir.parent.parent.path}/manage-android-impeller-backend/scripts/manage_impeller_backend.dart';
 
       if (File(configScript).existsSync()) {
         final ProcessResult result = await Process.run('dart', <String>[
@@ -324,7 +324,7 @@ Future<void> main(List<String> args) async {
         final String scriptPath = await File(Platform.script.toFilePath()).resolveSymbolicLinks();
         final Directory scriptDir = File(scriptPath).parent;
         final String configScript =
-            '${scriptDir.parent.parent.path}/configure-android-impeller-backend/scripts/configure_impeller_backend.dart';
+            '${scriptDir.parent.parent.path}/manage-android-impeller-backend/scripts/manage_impeller_backend.dart';
         final ProcessResult result = await Process.run('dart', <String>[
           configScript,
           '--package-dir',
