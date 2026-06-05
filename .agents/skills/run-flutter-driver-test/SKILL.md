@@ -25,7 +25,6 @@ dart .agents/skills/run-flutter-driver-test/scripts/run_driver_test.dart \
 
 ### Optional Arguments:
 * **`--recreate-platform <platforms>`**: A comma-separated list of platforms to recreate before compilation (e.g., `android` or `android,ios`). Runs `flutter create --platform=<platform> --no-overwrite .` inside the package directory.
-* **`--update-goldens`**: Prepend environment variables `UPDATE_GOLDENS=1` to update local reference screenshots.
+* **`--update-goldens`**: Prepend environment variables `UPDATE_GOLDENS=true` to update local reference screenshots.
 * **`--android-impeller-backend [vulkan|opengles]`**: Finds and rewrites the `AndroidManifest.xml` backend configurations in the nested Android project prior to execution.
 * **`--no-dds`**: Disables the Dart Development Service (adds `--no-dds` flag).
-

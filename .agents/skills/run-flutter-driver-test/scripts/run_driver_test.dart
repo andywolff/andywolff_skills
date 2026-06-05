@@ -24,7 +24,7 @@ void showUsageAndExit() {
   print(
     '  --recreate-platform <platforms>  Comma-separated list of platforms to recreate before running (e.g. android or android,ios)',
   );
-  print('  --update-goldens                 Set UPDATE_GOLDENS=1 env variable');
+  print('  --update-goldens                 Set UPDATE_GOLDENS=true env variable');
   print(
     '  --android-impeller-backend <v>   Configure Impeller backend in AndroidManifest.xml (vulkan or opengles)',
   );
@@ -131,8 +131,8 @@ Future<int> runTest(
 ) async {
   final env = <String, String>{...Platform.environment};
   if (updateGoldens) {
-    env['UPDATE_GOLDENS'] = '1';
-    print('📸 Running test with UPDATE_GOLDENS=1 environment variable set.');
+    env['UPDATE_GOLDENS'] = 'true';
+    print('📸 Running test with UPDATE_GOLDENS=true environment variable set.');
   }
 
   final cmdArgs = <String>[
