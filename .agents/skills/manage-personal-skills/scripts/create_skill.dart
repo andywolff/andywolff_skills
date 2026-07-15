@@ -50,19 +50,12 @@ void main(List<String> args) async {
 
   final String centralRepoPath =
       '/Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills';
-  final String flutterRepoPath =
-      '/Users/awolff/Projects/andywolff/flutter/.agents/skills';
+  final String parentRepoPath = '/Users/awolff/Projects/andywolff';
 
   final Directory centralSkillsDir = Directory(centralRepoPath);
-  final Directory flutterSkillsDir = Directory(flutterRepoPath);
 
   if (!centralSkillsDir.existsSync()) {
     print('Error: Central skills repository not found at $centralRepoPath.');
-    exit(1);
-  }
-
-  if (!flutterSkillsDir.existsSync()) {
-    print('Error: Flutter skills directory not found at $flutterRepoPath.');
     exit(1);
   }
 
@@ -107,24 +100,42 @@ Describe details of what this skill does and how to run it.
   await skillMdFile.writeAsString(skillMdContent);
   print('📝 Generated starter template SKILL.md.');
 
-  // Create symlink
-  final String symlinkPath = '$flutterRepoPath/personal-$skillName';
-  final Link symlink = Link(symlinkPath);
+  // Find all sibling flutter repositories/worktrees
+  final Directory parentDir = Directory(parentRepoPath);
+  final List<Directory> targetSkillsDirs = [];
 
-  if (symlink.existsSync()) {
-    print(
-      '⚠️  Warning: Symlink already exists at $symlinkPath. Recreating it...',
-    );
-    symlink.deleteSync();
+  if (parentDir.existsSync()) {
+    for (final FileSystemEntity entity in parentDir.listSync()) {
+      if (entity is Directory) {
+        final String name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
+        if (name == 'flutter' || name.startsWith('flutter-')) {
+          final Directory targetSkillsDir = Directory('${entity.path}/.agents/skills');
+          if (targetSkillsDir.existsSync()) {
+            targetSkillsDirs.add(targetSkillsDir);
+          }
+        }
+      }
+    }
   }
 
-  print('🔗 Creating symbolic link: personal-$skillName...');
-  symlink.createSync(targetSkillPath);
+  if (targetSkillsDirs.isEmpty) {
+    print('⚠️  Warning: No flutter worktrees or repositories found under $parentRepoPath.');
+  } else {
+    print('\n🔗 Creating symbolic links across all detected worktrees:');
+    for (final Directory targetDir in targetSkillsDirs) {
+      final String symlinkPath = '${targetDir.path}/personal-$skillName';
+      final Link symlink = Link(symlinkPath);
+
+      if (symlink.existsSync()) {
+        symlink.deleteSync();
+      }
+
+      symlink.createSync(targetSkillPath);
+      print('   - Installed in: ${targetDir.parent.path}');
+    }
+  }
 
   print('\n✨ Custom skill "$skillName" successfully created and installed!');
-  print('   - Central Path: $targetSkillPath');
-  print('   - Symlink Path: $symlinkPath');
-  print(
-    '   - Run "dart run dart_skills_lint:cli" inside dev/tools in the flutter repo to validate formatting.\n',
-  );
+  print('   - Central Path: $targetSkillPath\n');
 }
+

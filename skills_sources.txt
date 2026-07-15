@@ -1,0 +1,2 @@
+/Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills
+/Users/awolff/Projects/andywolff/kevmoo_skills/skills
