@@ -166,6 +166,7 @@ Future<int> runTest(
   var didCrash = false;
   Timer? monitoringTimer;
   Timer? warningTimeoutTimer;
+  var hasStarted = false;
 
   void checkSuccessLine(String line) {
     if (line.contains('Connected to Flutter application') ||
@@ -174,10 +175,13 @@ Future<int> runTest(
       warningTimeoutTimer?.cancel();
       warningTimeoutTimer = null;
     }
+    if (line.contains('VM Service URL on device') ||
+        line.contains('Connected to Flutter application')) {
+      hasStarted = true;
+    }
   }
 
   if (packageId != null) {
-    var hasStarted = false;
     var consecutiveDeadTicks = 0;
 
     monitoringTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {

@@ -21,7 +21,9 @@ dart .agents/skills/run-flutter-driver-test/scripts/run_driver_test.dart \
 ### Required Arguments:
 * **`--package-dir <path>`**: The relative path to the Flutter project root (e.g. `dev/integration_tests/android_engine_test`).
 * **`--driver <path>`**: Relative path to the test driver file (e.g. `test_driver/engine_handle_test.dart`).
-* **`--target <path>`**: Relative path to the target dart application entrypoint (e.g. `lib/engine_handle.dart`).
+* **`--target <path>`**: Relative path to the target dart application entrypoint.
+  > [!IMPORTANT]
+  > The target file MUST call `enableFlutterDriverExtension()` on startup. Passing a raw app entrypoint (like `lib/main.dart`) that is missing the driver extension will cause the VM Service connection to hang indefinitely. For standard integration tests, use a dedicated driver wrapper (such as `integration_test/integration_test_wrapper.dart`) rather than the production application entrypoint.
 
 ### Optional Arguments:
 * **`--recreate-platform <platforms>`**: A comma-separated list of platforms to recreate before compilation (e.g., `android` or `android,ios`). Runs `flutter create --platform=<platform> --no-overwrite .` inside the package directory.
