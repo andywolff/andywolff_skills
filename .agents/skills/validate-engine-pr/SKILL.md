@@ -28,7 +28,13 @@ et fetch
 
 ---
 
-## Step 2: GN Build Preparation
+## Step 2: CI Shard Check & Staging Runs (User Confirmation Required)
+If the PR modifies `.ci.yaml` (framework) or `engine/src/flutter/.ci.yaml` (engine), it is likely adding or modifying a CI shard.
+Since staging runs can be slow and expensive, **do not trigger a staging run automatically**. Instead, analyze the changes, present them to the user, and ask for explicit confirmation before using the `led-staging-run` skill to launch a staging run on LUCI.
+
+---
+
+## Step 3: GN Build Preparation
 Generate Ninja build files for the host architecture. On Apple Silicon Macs (`arm64`), explicitly request unoptimized builds and include software/ANGLE OpenGL ES translation layers.
 
 ```bash
@@ -43,7 +49,7 @@ python3 flutter/tools/gn --unoptimized --mac-cpu=arm64 --use-glfw-swiftshader
 
 ---
 
-## Step 3: Compiling C++ and Dart Test Targets
+## Step 4: Compiling C++ and Dart Test Targets
 Do not rely on automated scripts (`run_tests.py`) to compile C++ or specialized OpenGLES targets. Use `et build` (or Ninja) to explicitly compile precisely what is needed.
 
 > [!TIP]
@@ -61,7 +67,7 @@ ninja -C out/host_debug_unopt_arm64 flutter/testing/dart flutter/lib/ui/fixtures
 
 ---
 
-## Step 4: Hermetic C++ Unittest Execution (Impeller)
+## Step 5: Hermetic C++ Unittest Execution (Impeller)
 When executing C++ engine unittests on macOS against OpenGL ES, you **must** inject `DYLD_LIBRARY_PATH` so `dlopen` can locate the compiled ANGLE translation dynamic libraries (`libGLESv2.dylib`).
 
 ```bash
@@ -74,7 +80,7 @@ DYLD_LIBRARY_PATH=./out/host_debug_unopt_arm64 ./out/host_debug_unopt_arm64/impe
 
 ---
 
-## Step 5: Hermetic Dart GPU Test Execution (`flutter_tester`)
+## Step 6: Hermetic Dart GPU Test Execution (`flutter_tester`)
 Dart API tests (like `gpu_test.dart`) will **silently skip** all test cases if specific feature flags are omitted. You must invoke the headless runner manually with explicit feature enablement and pre-compiled fixture paths:
 
 ### Metal Backend Execution:
@@ -110,7 +116,7 @@ DYLD_LIBRARY_PATH=./out/host_debug_unopt_arm64 ./out/host_debug_unopt_arm64/flut
 
 ---
 
-## Step 6: C++ Formatting and Linting Checks
+## Step 7: C++ Formatting and Linting Checks
 If you have modified C++, Objective-C, or GN files, verify they adhere to style guidelines using the engine tools:
 
 ```bash
