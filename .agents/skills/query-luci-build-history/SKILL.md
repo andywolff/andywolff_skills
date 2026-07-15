@@ -9,12 +9,24 @@ Use this skill when you need to inspect the status, success rates, and execution
 
 Because the dashboard pages at `ci.chromium.org/ui/` are client-side rendered Single Page Applications (SPAs) that require JavaScript, you cannot extract their history using simple HTTP/HTML scrapers. Instead, use the Buildbucket CLI (`bb`) to query build data.
 
+## Prerequisites
+1. The Buildbucket CLI (`bb`) must be installed (typically distributed as part of `depot_tools`).
+2. You must be authenticated to LUCI. Run the following command to log in:
+   ```bash
+   bb auth-login
+   ```
+
 ---
 
 ## Usage
 
 ### 1. Listing Builds
-To list the most recent `N` builds for a builder, use the `bb ls` command with the path format `"<project>/<bucket>/<builder>"`. Wrap the path in quotes if the builder name contains spaces:
+To list the most recent `N` builds for a builder, use the `bb ls` command with the path format `"<project>/<bucket>/<builder>"`. Wrap the path in quotes if the builder name contains spaces.
+
+#### Standard Flutter Paths:
+* **Production (Prod)**: `flutter/prod/<builder_name>`
+* **Staging (Bringup)**: `flutter/staging/<builder_name>`
+* **PR Presubmit (Try)**: `flutter/try/<builder_name>`
 
 ```sh
 bb ls -n <limit> "<project>/<bucket>/<builder>"
@@ -26,24 +38,25 @@ bb ls -n 50 "flutter/staging/Linux_android_emu android_hardware_smoke_opengles_t
 ```
 
 ### 2. Checking Builder Stability (Failures Query)
-To determine if a builder is stable enough to be promoted out of bringup (meaning it can run in presubmit and block PR merge without introducing flakes), you need to check for both regular failures (`FAILURE`) and infrastructure failures (`INFRA_FAILURE`).
+To determine if a builder is stable enough to be promoted out of bringup (meaning it can run in presubmit and block PR merge without introducing flakes), you need to check for regular failures (`FAILURE`), infrastructure failures (`INFRA_FAILURE`), and timeouts/hangs (`CANCELED`).
 
 > [!WARNING]
 > **Go Flag Overwrite Limitation**: Because the `bb` CLI is written in Go, passing the `-status` flag multiple times (e.g. `-status failure -status infra_failure`) does **NOT** append them; instead, the later occurrence completely overwrites the earlier one.
 
-To query for both statuses safely, use one of the following methods:
+To query for all failure statuses safely, use one of the following methods:
 
 #### Method A: Filter using grep (Recommended)
 Query the recent builds with minimal fields and grep for failing statuses. This is the most reliable way to inspect the recent runs window:
 ```sh
-bb ls -n <limit> -fields "id,status" "<project>/<bucket>/<builder>" | grep -E "FAILURE|INFRA_FAILURE"
+bb ls -n <limit> -fields "id,status" "<project>/<bucket>/<builder>" | grep -E "FAILURE|INFRA_FAILURE|CANCELED"
 ```
 
 #### Method B: Run separate queries
-Run two distinct commands to verify each status separately:
+Run distinct commands to verify each status separately:
 ```sh
 bb ls -n <limit> -status failure "<project>/<bucket>/<builder>"
 bb ls -n <limit> -status infra_failure "<project>/<bucket>/<builder>"
+bb ls -n <limit> -status canceled "<project>/<bucket>/<builder>"
 ```
 
 * **Interpreting Results**: If no matching builds are returned by these commands, the builder has a **100% success rate** over the queried limit.
@@ -55,27 +68,28 @@ If you want to quickly see the status of all builds without dumping verbose buil
 ```sh
 bb ls -n <limit> -fields "id,status" "<project>/<bucket>/<builder>"
 ```
-This prints list of URLs and their corresponding statuses (e.g. `SUCCESS` or `FAILURE`).
+This prints a list of URLs and their corresponding statuses (e.g. `SUCCESS` or `FAILURE`).
 
 
 ### 4. Querying Average Builder Execution Time
-To calculate the average execution time of successful builds for a specific builder, query the recent builds with JSON output enabled:
+To calculate the average execution time (in minutes) of successful builds for a specific builder, query the recent builds with JSON output enabled and parse using `jq`:
 
 ```sh
-bb ls -n <limit> -status success -json "<project>/<bucket>/<builder>"
+# Note: jq's fromdate requires stripping fractional seconds/nanoseconds (.123456Z -> Z)
+bb ls -n <limit> -status success -json "<project>/<bucket>/<builder>" \
+  | jq -s 'map(((.endTime | sub("\\.[0-9]+Z$"; "Z") | fromdate) - (.startTime | sub("\\.[0-9]+Z$"; "Z") | fromdate))) | add / length / 60'
 ```
-
-From each JSON line output, parse `startTime` and `endTime` (e.g. `"2026-07-09T20:41:20.631059664Z"`), convert to `DateTime`, subtract start from end to get the duration, and calculate the average across all successfully analyzed builds.
 
 
 ### 5. Querying Build Step Durations / Breakdown
-To inspect where time is spent during a build, fetch the build steps with JSON output enabled:
+To inspect where time is spent during a build, fetch the build steps with JSON output enabled and parse step durations (in seconds) sorted by the longest steps:
 
 ```sh
-bb get -json -steps <BUILD_ID_OR_PATH>
+# Note: jq's fromdate requires stripping fractional seconds/nanoseconds (.123456Z -> Z)
+bb get -json -steps <BUILD_ID_OR_PATH> \
+  | jq '.steps[] | select(.endTime != null) | {name: .name, duration: (((.endTime | sub("\\.[0-9]+Z$"; "Z") | fromdate) - (.startTime | sub("\\.[0-9]+Z$"; "Z") | fromdate)))}' \
+  | jq -s 'sort_by(.duration) | reverse[]'
 ```
-
-From the JSON output, locate the `steps` array. For each step, parse and compare the `startTime` and `endTime` fields to compute the individual step durations. This is useful for identifying setup/teardown overhead versus actual test execution runtime.
 
 
 ### 6. Avoiding Console Output Truncation
@@ -114,6 +128,3 @@ For graphics/golden image comparison failures, inspect the test stdout:
 * **Gold Triaging URLs**: Search the logs for `https://flutter-gold.skia.org/detail?...` URLs. **You MUST extract and present these links directly in your final response/diagnosis to the user** so they can easily click and view the mismatched images in their browser.
 * **Inspect Digest Size**: A very small PNG output size (e.g., ~1.4 KB compared to the typical 10 KB–20 KB) is a strong indicator of a completely blank or uniform (usually black) screenshot.
 * **Identify System-Level Compositing Issues**: If multiple distinct test scenarios (e.g. different platform view composition modes) fail by producing the **exact same image digest**, this indicates a system-level rendering or compositing failure (such as an emulator GPU driver or Vulkan surface composition flake) rather than a code defect.
-
-
-
