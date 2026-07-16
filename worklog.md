@@ -115,4 +115,10 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **Safe Force Pushing**: Never recommend using `git push -f` or `git push --force`. Instead, always recommend using `git push --force-with-lease` to prevent overwriting other developers' remote changes.
 * **PR Comment Simplification**: When writing PR comments with build performance tables, keep tables intact but keep surrounding explanations extremely simple, direct, and free of subheadings or bulleted notes, integrating any VM variance disclaimers naturally within the prose.
 * **Triage Uncommitted Check**: When resolving comments, always verify code changes are committed and pushed before proposing to post responses or resolve threads on GitHub, to keep the remote branch in sync with review comments.
+ 
+
+### Documentation Line Wrapping
+* **Semantic Line Breaks**: Apply semantic line breaks of <= 80 characters for all non-table, non-code prose in Markdown files, keeping prepositions or conjunctions at the end of wrapped lines to signify continuation.
+
+
 
