@@ -1,0 +1,9 @@
+name: ktlint_runner
+description: Runs Kotlin code style analysis and formatting.
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  path: ^1.9.0
