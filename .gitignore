@@ -1,0 +1,8 @@
+.dart_tool/
+pubspec.lock
+tmp_ktlint/
+*.txt
+*.log
+step_log.txt
+build_history.txt
+step_log.txt
