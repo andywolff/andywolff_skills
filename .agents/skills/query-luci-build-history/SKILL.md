@@ -128,3 +128,18 @@ For graphics/golden image comparison failures, inspect the test stdout:
 * **Gold Triaging URLs**: Search the logs for `https://flutter-gold.skia.org/detail?...` URLs. **You MUST extract and present these links directly in your final response/diagnosis to the user** so they can easily click and view the mismatched images in their browser.
 * **Inspect Digest Size**: A very small PNG output size (e.g., ~1.4 KB compared to the typical 10 KB–20 KB) is a strong indicator of a completely blank or uniform (usually black) screenshot.
 * **Identify System-Level Compositing Issues**: If multiple distinct test scenarios (e.g. different platform view composition modes) fail by producing the **exact same image digest**, this indicates a system-level rendering or compositing failure (such as an emulator GPU driver or Vulkan surface composition flake) rather than a code defect.
+
+
+### 8. Waiting for Builds to Complete (Watch/Collect Mode)
+To wait for one or more builds to finish running before proceeding with further validation, use the `bb collect` command. It blocks until the specified builds terminate:
+
+```sh
+bb collect <BUILD_ID> [<BUILD_ID>...]
+```
+
+**Example:**
+```sh
+bb collect 8675453743800778209 8675453737898952849
+```
+This is the recommended watch method when monitoring staging runs launched via `led launch`.
+

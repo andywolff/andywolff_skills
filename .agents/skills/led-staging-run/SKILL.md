@@ -71,6 +71,10 @@ led get-builder 'luci.flutter.staging:<PRESUBMIT_TEST_NAME>' \
 ```
 
 ### Step 3: Output & Task Monitoring
-When `led launch` succeeds, it outputs JSON metadata containing a Swarming task URL (e.g., `https://chromium-swarm.appspot.com/task?id=...`). 
+When `led launch` succeeds, it outputs JSON metadata containing a Swarming/Buildbucket task URL and build ID.
 
-**You MUST extract this task URL and present it directly to the user in your final response** so they can easily click and monitor the build progress in their web browser.
+1. **Watch the Build**: Use the `bb collect` command in a background task to block and wait for the builds to end:
+   ```bash
+   bb collect <BUILD_ID>
+   ```
+2. **Present Links**: Extract the Swarming task URL (e.g., `https://ci.chromium.org/b/...`) and present it directly to the user in your final response so they can easily click and monitor the build progress in their web browser.
