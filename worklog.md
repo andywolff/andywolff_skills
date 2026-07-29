@@ -39,7 +39,16 @@ Detailed instructions for running Android instrumented tests with a local engine
 ---
 
 ### Local Golden Test Validation
-* **Rule**: To validate golden comparisons locally without Skia Gold, first generate reference baseline images in `test_driver/goldens/` by running `flutter drive` with `UPDATE_GOLDENS=true`, or the subsequent instrumented APK will fail to find and load comparator reference images.
+* **Rule**: To validate golden comparisons locally without Skia Gold, first
+  generate reference baseline images in `test_driver/goldens/` by running
+  `flutter drive` with the environment variable `UPDATE_GOLDENS=1` active,
+  otherwise the subsequent instrumented APK will fail to find and load
+  comparator reference images.
+* **Local Linter Masking**: Local `analysis_options.yaml` files (e.g., generated
+  dynamically by `flutter create` or plugins) can override the repository's root
+  `analysis_options.yaml` and mask static analysis errors during local
+  `flutter analyze` runs. Deleting them ensures repo-wide strict rules are
+  enforced correctly.
 
 ---
 
@@ -118,7 +127,7 @@ Detailed instructions for running Android instrumented tests with a local engine
  
 
 ### Documentation Line Wrapping
-* **Semantic Line Breaks**: Apply semantic line breaks of <= 80 characters for all non-table, non-code prose in Markdown files, keeping prepositions or conjunctions at the end of wrapped lines to signify continuation.
-
-
+* **Semantic Line Breaks**: Apply semantic line breaks of <= 80 characters for
+  all non-table, non-code prose in Markdown files, keeping prepositions or
+  conjunctions at the end of wrapped lines to signify continuation.
 
