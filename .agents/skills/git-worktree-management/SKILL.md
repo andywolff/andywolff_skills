@@ -80,3 +80,18 @@ To resolve this, run the symlinking script from the `personal-manage-personal-sk
 .agents/skills/personal-manage-personal-skills/scripts/symlink_all.sh <worktree-path>
 ```
 For more details, see the [manage-personal-skills](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/manage-personal-skills) skill.
+
+## 5. Bootstrapping gclient in a Worktree
+
+When using Git worktrees for engine/framework development, the `.gclient`
+configuration file must be present at the root of the new worktree directory
+to ensure `gclient` can locate the solution root.
+
+- If a `.gclient` file exists in the master or sibling checkout, copy it
+  to the root of the new worktree.
+- If no `.gclient` file is available, refer to the official
+  [Setting up the Engine development environment](https://github.com/flutter/flutter/wiki/Setting-up-the-Engine-development-environment#getting-the-source)
+  guide on the Flutter Wiki for how to configure and bootstrap `gclient`.
+
+
+
