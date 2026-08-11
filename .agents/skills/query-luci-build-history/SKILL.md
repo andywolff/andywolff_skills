@@ -1,13 +1,19 @@
 ---
 name: query-luci-build-history
-description: Query LUCI build history and check builder stability using the Buildbucket CLI (bb).
+description: >-
+  Use this skill when the user asks to query LUCI build history or check
+  builder stability using the Buildbucket CLI (bb).
 ---
 
 # Query LUCI Build History and Stability
 
-Use this skill when you need to inspect the status, success rates, and execution history of builders on LUCI (staging or production).
+Use this skill when you need to inspect the status, success rates, and
+execution history of builders on LUCI (staging or production).
 
-Because the dashboard pages at `ci.chromium.org/ui/` are client-side rendered Single Page Applications (SPAs) that require JavaScript, you cannot extract their history using simple HTTP/HTML scrapers. Instead, use the Buildbucket CLI (`bb`) to query build data.
+Because the dashboard pages at `ci.chromium.org/ui/` are client-side rendered
+Single Page Applications (SPAs) that require JavaScript, you cannot extract
+their history using simple HTTP/HTML scrapers. Instead, use the Buildbucket
+CLI (`bb`) to query build data.
 
 ## Prerequisites
 1. The Buildbucket CLI (`bb`) must be installed (typically distributed as part of `depot_tools`).
@@ -61,8 +67,31 @@ bb ls -n <limit> -status canceled "<project>/<bucket>/<builder>"
 
 * **Interpreting Results**: If no matching builds are returned by these commands, the builder has a **100% success rate** over the queried limit.
 
+### 3. Automated Flakiness & Baseline Analysis
 
-### 3. Printing Clean Status Summaries
+To perform a comprehensive flakiness analysis automatically across all shards
+(Vulkan and OpenGLES, both host-driven and instrumented) and environments
+(Staging, Prod, and Try), run the packaged analysis script:
+
+```sh
+dart .agents/skills/personal-query-luci-build-history/scripts/analyze_flakiness.dart <output_report.md>
+```
+
+#### Key Capabilities:
+1. **Multi-Environment Coverage**: Analyzes Staging, Prod, and Try buckets
+   for all target shards.
+2. **Commit/Build Date Tracking**: Identifies the creation timestamps of the
+   earliest and latest valid runs in the window, and reports specific failure
+   timestamps.
+3. **Bringup-Removal Warnings**: Detects if Staging results are older than 7
+   days (indicating the shard has been promoted to production by removing
+   `bringup: true` from `.ci.yaml`) and posts a warning in the report.
+4. **AGP Mitigation Exclusion**: Automatically parses build summaries to identify
+   and filter out compile-time errors caused by AGP 9 migration, establishing
+   a clean baseline of actual test failures.
+
+
+### 4. Printing Clean Status Summaries
 If you want to quickly see the status of all builds without dumping verbose build parameters, filter the fields:
 
 ```sh
@@ -71,7 +100,7 @@ bb ls -n <limit> -fields "id,status" "<project>/<bucket>/<builder>"
 This prints a list of URLs and their corresponding statuses (e.g. `SUCCESS` or `FAILURE`).
 
 
-### 4. Querying Average Builder Execution Time
+### 5. Querying Average Builder Execution Time
 To calculate the average execution time (in minutes) of successful builds for a specific builder, query the recent builds with JSON output enabled and parse using `jq`:
 
 ```sh
@@ -81,7 +110,7 @@ bb ls -n <limit> -status success -json "<project>/<bucket>/<builder>" \
 ```
 
 
-### 5. Querying Build Step Durations / Breakdown
+### 6. Querying Build Step Durations / Breakdown
 To inspect where time is spent during a build, fetch the build steps with JSON output enabled and parse step durations (in seconds) sorted by the longest steps:
 
 ```sh
@@ -92,7 +121,7 @@ bb get -json -steps <BUILD_ID_OR_PATH> \
 ```
 
 
-### 6. Avoiding Console Output Truncation
+### 7. Avoiding Console Output Truncation
 Because `bb ls` outputs verbose metadata (such as build tags and commit lists) by default, queries with large limits (e.g., `-n 50` or `-n 100`) will exceed the agent console's output limit. This triggers truncation at the top of the output, causing the agent to miss the most recent builds and failures.
 
 To avoid truncation, always use one of the following strategies:
@@ -107,7 +136,7 @@ To avoid truncation, always use one of the following strategies:
   ```
 
 
-### 7. Diagnosing Specific Build Failures
+### 8. Diagnosing Specific Build Failures
 When a build has status `FAILURE`, you can use `bb` to locate the failing step, retrieve the logs, and diagnose the root cause:
 
 #### A. List Build Steps
@@ -130,7 +159,7 @@ For graphics/golden image comparison failures, inspect the test stdout:
 * **Identify System-Level Compositing Issues**: If multiple distinct test scenarios (e.g. different platform view composition modes) fail by producing the **exact same image digest**, this indicates a system-level rendering or compositing failure (such as an emulator GPU driver or Vulkan surface composition flake) rather than a code defect.
 
 
-### 8. Waiting for Builds to Complete (Watch/Collect Mode)
+### 9. Waiting for Builds to Complete (Watch/Collect Mode)
 To wait for one or more builds to finish running before proceeding with further validation, use the `bb collect` command. It blocks until the specified builds terminate:
 
 ```sh
