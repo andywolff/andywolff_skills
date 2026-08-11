@@ -8,11 +8,18 @@ description: >-
 # Led Staging Run
 
 Use this skill when you need to trigger a staging run on LUCI (swarming) for
-a new or existing test shard in a Flutter PR.
+a new or existing test shard in a Flutter PR. For additional context, see
+[Running-Devicelab-Tests-For-PR.md](https://github.com/flutter/flutter/blob/main/docs/infra/Running-Devicelab-Tests-For-PR.md).
 
 ## Prerequisites
 1. The `led` CLI tool must be installed (distributed as part of `depot_tools`).
-2. Verify authentication status or login:
+2. (Internal/Googlers) Verify SSO / LOAS credentials if targeting internal builders (since `led` commands depend on these certificates):
+   ```bash
+   gcertstatus || gcert
+   # or
+   glogin status || glogin
+   ```
+3. Verify `led` authentication status or login:
    ```bash
    # Check authentication status
    led auth-info
