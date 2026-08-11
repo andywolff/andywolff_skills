@@ -1,11 +1,15 @@
 ---
 name: validate-engine-pr
-description: A systematic skill to check out, compile, and validate Flutter Engine PRs and C++/Dart engine tests locally on macOS/Linux across Metal and OpenGLES backends.
+description: >-
+  Use this skill to check out, compile, and validate Flutter Engine PRs
+  and C++/Dart engine tests locally on macOS/Linux across Metal and OpenGLES backends.
 ---
 
 # Flutter Engine Autonomous PR & Test Validation Guide
 
-When tasked with validating a Flutter Engine PR or running local C++/Dart engine tests, agents and developers must navigate specific mono-repo build dependencies, graphics backend translation layers (ANGLE), and headless execution flags. 
+When validating a Flutter Engine PR or running local C++/Dart engine tests,
+you must navigate specific mono-repo build dependencies, graphics backend
+translation layers (ANGLE), and headless execution flags. 
 
 Follow this definitive, chronological protocol to ensure completely hermetic, non-skipped test execution.
 

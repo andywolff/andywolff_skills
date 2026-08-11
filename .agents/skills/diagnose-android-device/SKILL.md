@@ -1,11 +1,15 @@
 ---
 name: diagnose-android-device
-description: Check connected Android device model, GPU rendering driver, and graphics version compatibility.
+description: >-
+  Use this skill when the user wants to check the connected Android device
+  model, GPU rendering driver, and graphics version compatibility.
 ---
 
 # Diagnose Android Device
 
-Use this skill to assess the graphics hardware profile, OpenGL ES version, and Vulkan driver compatibility of the connected Android device or emulator prior to executing test runs or to triage graphics failures.
+Use this skill to assess the graphics hardware profile, OpenGL ES version, and
+Vulkan driver compatibility of the connected Android device or emulator prior
+to executing test runs or to triage graphics failures.
 
 ## Usage
 

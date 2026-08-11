@@ -1,11 +1,15 @@
 ---
 name: manage-android-impeller-backend
-description: Manage Android Impeller graphics rendering backend configurations (detection, configuration, and restoration).
+description: >-
+  Use this skill when the user wants to manage Android Impeller graphics
+  rendering backend configurations (detection, configuration, and restoration).
 ---
 
 # Manage Android Impeller Backend
 
-Use this skill to detect, configure, or toggle the active Impeller rendering backend (`vulkan` or `opengles`) across the Android application manifests, or to restore them to their original configuration.
+Use this skill to detect, configure, or toggle the active Impeller rendering
+backend (vulkan or opengles) across the Android application manifests, or to
+restore them to their original configuration.
 
 ## Usage
 

@@ -1,11 +1,15 @@
 ---
 name: run-flutter-driver-test
-description: General-purpose skill to run host-driven Flutter Driver integration tests with dynamic backend configuration, target paths, and baseline management.
+description: >-
+  Use this skill when the user wants to run host-driven Flutter Driver
+  integration tests with dynamic backend configuration, target paths,
+  and baseline management.
 ---
 
 # Flutter Driver Test Orchestrator
 
-Use this skill whenever you need to run, compile, or capture goldens for any `flutter drive`-based integration test.
+Use this skill when you need to run, compile, or capture goldens for any
+`flutter drive`-based integration test.
 
 ## Step 1: Execute test target
 Run the generalized Dart runner script with appropriate parameter arguments:

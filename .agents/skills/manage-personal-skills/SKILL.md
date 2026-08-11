@@ -1,13 +1,19 @@
 ---
 name: manage-personal-skills
-description: Guide and automate the creation, symlinking, and management of personal agent skills across workspaces and worktrees.
+description: >-
+  Use this skill to guide and automate the creation, symlinking, and
+  management of personal agent skills across workspaces and worktrees.
 ---
 
 # Manage Personal Skills
 
-Use this skill whenever you need to define, scaffold, or install a new custom/personal agent skill, or sync/symlink existing skills into a workspace or new Git worktree.
+Use this skill when you need to define, scaffold, or install a new custom/
+personal agent skill, or sync/symlink existing skills into a workspace or
+new Git worktree.
 
-This skill ensures all custom developer-defined skills are placed in the central skills repository (`andywolff_skills`) and correctly symlinked into target repository worktrees (like `flutter`) with a `personal-` prefix.
+This skill ensures all custom developer-defined skills are placed in the
+central skills repository (`andywolff_skills`) and correctly symlinked into
+target repository worktrees (like `flutter`) with a `personal-` prefix.
 
 ## 1. Creating a New Skill
 

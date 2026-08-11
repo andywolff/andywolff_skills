@@ -1,13 +1,19 @@
 ---
 name: download-goldens
-description: Download master-approved golden files for the android_hardware_smoke_test suite directly from Skia Gold's public REST APIs.
+description: >-
+  Use this skill when the user wants to download master-approved golden files
+  for the android_hardware_smoke_test suite directly from Skia Gold's public REST APIs.
 ---
 
 # Download Goldens
 
-Use this skill to fetch master-approved reference screenshots from Skia Gold to bootstrap or restore the `test_driver/goldens/` assets directory. 
+Use this skill to fetch master-approved reference screenshots from Skia Gold
+to bootstrap or restore the `test_driver/goldens/` assets directory. 
 
-This enables running and debugging the native Android JUnit instrumented tests directly (via Android Studio, VS Code, or Gradle `connectedDebugAndroidTest` tasks) without needing to run the slow host-driven `flutter drive` tests first.
+This enables running and debugging the native Android JUnit instrumented tests
+directly (via Android Studio, VS Code, or Gradle `connectedDebugAndroidTest`
+tasks) without needing to run the slow host-driven `flutter drive` tests
+first.
 
 ## Prerequisites
 1. The **Dart SDK** must be installed and available in your shell's `PATH`.

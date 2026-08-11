@@ -1,11 +1,14 @@
 ---
 name: led-staging-run
-description: Start a staging run on LUCI of a new or existing test shard using the led tool.
+description: >-
+  Use this skill when the user wants to trigger a staging run on LUCI (swarming)
+  for a new or existing test shard in a Flutter PR.
 ---
 
 # Led Staging Run
 
-Use this skill whenever you need to trigger a staging run on LUCI (swarming) for a new or existing test shard in a Flutter PR.
+Use this skill when you need to trigger a staging run on LUCI (swarming) for
+a new or existing test shard in a Flutter PR.
 
 ## Prerequisites
 1. The `led` CLI tool must be installed (distributed as part of `depot_tools`).

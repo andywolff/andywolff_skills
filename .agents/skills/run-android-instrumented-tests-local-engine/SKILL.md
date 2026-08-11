@@ -1,13 +1,19 @@
 ---
 name: run-android-instrumented-tests-local-engine
-description: Run Android instrumented tests using a local engine compile via Gradle.
+description: >-
+  Use this skill when the user wants to run Android instrumented tests using
+  a local engine compile via Gradle.
 ---
 
 # Run Android Instrumented Tests with Local Engine
 
-Use this skill whenever you need to compile, resolve, and run native Android instrumented tests (e.g. `android_hardware_smoke_test`) against a local engine build on a connected Android device or emulator.
+Use this skill when you need to compile, resolve, and run native Android
+instrumented tests (e.g. `android_hardware_smoke_test`) against a local engine
+build on a connected Android device or emulator.
 
-Since running directly via Gradle (`./gradlew`) bypasses the `flutter` CLI tool, you must manually set up the local engine dependencies and configuration.
+Since running directly via Gradle (`./gradlew`) bypasses the `flutter` CLI
+tool, you must manually set up the local engine dependencies and
+configuration.
 
 ## Prerequisites
 1. You must have a compiled Android local engine (e.g. `android_debug_unopt_arm64`). If not compiled, build it first using the engine tool:
