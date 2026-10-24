@@ -44,8 +44,11 @@ Future<void> main() async {
 
     final branch = await getBranchName(path);
     final cleanStatus = await getCleanStatus(path);
-    final mergeStatus = await getMergeStatus(path, branch, upstreamBranch);
-    final prStatus = branch == '(detached)' ? 'N/A' : await getPRStatus(branch, repoRoot);
+    final prInfo = branch == '(detached)' ? null : await getPRInfo(branch, repoRoot);
+    final mergeStatus = await getMergeStatus(path, branch, upstreamBranch, prInfo: prInfo);
+    final prStatus = prInfo != null
+        ? '${prInfo.state} (#${prInfo.number})'
+        : (branch == '(detached)' ? 'N/A' : 'No PR');
 
     final pathBase = path.split('/').last;
     printRow(pathBase, branch, mergeStatus, cleanStatus, prStatus);
@@ -103,12 +106,17 @@ Future<int> countGitOutputLines(List<String> gitArgs, String path) async {
 }
 
 /// Determines the merge status of the branch relative to the upstream branch.
-Future<String> getMergeStatus(String path, String branch, String upstreamBranch) async {
+Future<String> getMergeStatus(
+  String path,
+  String branch,
+  String upstreamBranch, {
+  ({String state, int number})? prInfo,
+}) async {
   if (branch == '(detached)') {
     return 'N/A';
   }
 
-  // 1. Direct Merge Check
+  // 1. Direct Ancestor Merge Check
   final ancestorCheck = await Process.run('git', [
     '-C',
     path,
@@ -121,7 +129,29 @@ Future<String> getMergeStatus(String path, String branch, String upstreamBranch)
     return 'Merged (direct)';
   }
 
-  // 2. Squash/Patch Merge Check via diff comparison
+  // 2. Authoritative GitHub PR check (if PR is merged on upstream remote)
+  if (prInfo != null && prInfo.state.toUpperCase() == 'MERGED') {
+    return 'Merged (PR #${prInfo.number})';
+  }
+
+  // 3. Search for PR number reference in upstream branch commit history
+  if (prInfo != null) {
+    final prLogCheck = await Process.run('git', [
+      '-C',
+      path,
+      'log',
+      upstreamBranch,
+      '--grep=(#${prInfo.number})',
+      '-n',
+      '1',
+      '--oneline',
+    ]);
+    if (prLogCheck.exitCode == 0 && (prLogCheck.stdout as String).trim().isNotEmpty) {
+      return 'Merged (PR #${prInfo.number})';
+    }
+  }
+
+  // 4. Squash/Patch Merge Check via diff comparison
   final diffFilesResult = await Process.run('git', [
     '-C',
     path,
@@ -156,7 +186,7 @@ Future<String> getMergeStatus(String path, String branch, String upstreamBranch)
 }
 
 /// Fetches the PR status using the GitHub CLI.
-Future<String> getPRStatus(String branch, String repoRoot) async {
+Future<({String state, int number})?> getPRInfo(String branch, String repoRoot) async {
   try {
     final result = await Process.run('gh', [
       'pr',
@@ -170,20 +200,20 @@ Future<String> getPRStatus(String branch, String repoRoot) async {
     ], workingDirectory: repoRoot);
 
     if (result.exitCode != 0) {
-      return 'No PR';
+      return null;
     }
 
     final List<dynamic> prs = jsonDecode(result.stdout as String) as List<dynamic>;
     if (prs.isEmpty) {
-      return 'No PR';
+      return null;
     }
 
     final first = prs.first as Map<String, dynamic>;
     final state = first['state'] as String;
     final number = first['number'] as int;
-    return '$state (#$number)';
+    return (state: state, number: number);
   } catch (_) {
-    return 'N/A'; // gh CLI not installed or failed
+    return null; // gh CLI not installed or failed
   }
 }
 

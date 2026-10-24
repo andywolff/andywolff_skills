@@ -18,6 +18,10 @@ direct and squash/patch merges), dirty/clean files count, and pull request
 status (via the `gh` CLI):
 
 ```sh
+# From central repository:
+dart .agents/skills/git-worktree-management/scripts/check_worktrees.dart
+
+# Or from target worktree:
 dart .agents/skills/personal-git-worktree-management/scripts/check_worktrees.dart
 ```
 
