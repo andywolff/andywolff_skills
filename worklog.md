@@ -24,7 +24,7 @@ PR descriptions or code comments instead.
 - [ ] **Platform Views Testing**: Always synchronize screenshots by awaiting a native draw event (e.g., overriding `onDraw(Canvas)`) rather than a simple frame-delay loop.
 - [ ] **Workspace Isolation**: Use Git worktrees when running concurrent agents; copy untracked `.agents/skills/personal-*` symlinks to new worktrees.
 - [ ] **CLI Outputs**: Redirect verbose command outputs (e.g. log queries) to a file to prevent console truncation.
-- [ ] **Asynchronous Monitoring**: Prefer blocking watch/wait commands over polling loops for background tasks, or justify why polling is necessary.
+- [ ] **Asynchronous Monitoring**: Prefer blocking watch/wait commands (e.g., `bb collect`) over polling loops for background tasks; avoid `gh pr checks --watch` due to `Merge Queue Guard`.
 - [ ] **Warning & Lint Suppression**: Prioritize resolving compiler/linter warnings at code level; obtain confirmation before using suppression annotations (e.g. `@Suppress`, ignores).
 - [ ] **Gradle Commands workingDirectory**: Run `./gradlew` (or `gradlew.bat`) commands with `workingDirectory` set to the `android/` subdirectory where `settings.gradle` resides, using an absolute path to the executable.
 - [ ] **Local Linter Masking**: Delete untracked local
@@ -32,10 +32,17 @@ PR descriptions or code comments instead.
   overriding repo-wide rules during analysis runs.
 - [ ] **Test Canvas Texture Readback Usage**: Include `TextureUsage::kShaderRead` when creating mock test canvases that emulate non-framebuffer-fetch readback paths on Metal/Vulkan.
 - [ ] **Xcode Metal Toolchain**: Set `TOOLCHAINS=Metal` when compiling Metal shaders on macOS hosts with Xcode downloadable toolchains.
+- [ ] **File Creation Tooling**: Use dedicated file creation tools rather than shell redirection/heredocs to write workspace files.
 - [ ] **Asynchronous Test Snapshot Awaiting**: Always `await` asynchronous test helper calls that trigger raster snapshots (`toImage`) to prevent fast event loops from overflowing transient host buffer arenas and racing in-flight GPU execution.
 - [ ] **Vulkan Memory Type Selection**: Select memory type indices by querying `VkPhysicalDeviceMemoryProperties` rather than bitwise ANDing property flag enums against requirement bitmasks.
 - [ ] **Offscreen Render Target Cache Lifecycle**: Purge cached offscreen render targets between tests and under system memory pressure rather than tracking GPU completion fences.
 - [ ] **Offscreen Render Target Cache Pixel Format Matching**: Include the target pixel format in render target cache descriptors to avoid reusing wide-gamut textures for standard sRGB allocations or vice versa.
+- [ ] **Multi-line Automation Scripts**: Write multi-line automation scripts or test loops to the dedicated scratch directory rather than executing large inline shell blocks.
+- [ ] **Pre-push Hook Merge-Base Scope**: Keep local `origin/master` updated or use `--no-verify` when pushing to prevent Flutter engine's `pre-push` hook from formatting stale intervening upstream commits.
+- [ ] **Handling Authentication Errors**: Never skirt around authentication errors (such as disabling RBE or suppressing updates) - ask the user to log in or refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
+- [ ] **Jetski CLI Settings**: Configure Jetski CLI settings and command approvals in `~/.gemini/jetski/cli/settings.json`.
+- [ ] **Concurrent CLI Session Token Overwrites**: Terminate stale background CLI sessions when backend OAuth scopes change to prevent periodic background refreshes from overwriting system keychain tokens.
+- [ ] **In-Flight gclient Staging Directories**: Never delete `_gclient_*` directories without verifying running sync processes with `pgrep -fl "gclient|git-remote"`. These directories represent active repository clones in progress, not corrupted debris.
 - [ ] **Wide-Gamut Golden Screenshot Quantization**: Skia Gold ingests 8-bit PNGs, so Impeller 10-bit wide-gamut surfaces (`kB10G10R10A10XR`) are quantized and clamped to 8-bit DeviceRGB by `MetalGoldenScreenshotter`. Test lossless out-of-gamut float coordinates directly with `rawExtendedRgba128` instead.
 
 ---
@@ -178,6 +185,13 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **Preference**: Use Git worktrees when switching branches to prevent concurrent access conflicts.
 * **Guidelines**: Refer to [git-worktree-management](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/git-worktree-management) for procedures on symlinking skills, checking merge status, and safely removing worktrees.
 
+### Bootstrapping gclient in a Worktree
+* **Rule**: When using Git worktrees for engine/framework development, copy the `.gclient` configuration file from the master or sibling checkout to the root of the new worktree to ensure `gclient sync` can locate the solution root.
+
+### Pre-push Hook Scope and Stale Upstream Diffing
+* **Rule**: Flutter engine's `pre-push` githook calculates changed files against `origin/master`. If `origin/master` has fallen behind `upstream/master`, the hook will attempt to format and validate all intermediate commits that landed upstream.
+* **Mitigation**: Update `refs/remotes/origin/master` to match `upstream/master` (e.g. `git update-ref refs/remotes/origin/master refs/remotes/upstream/master`) or pass `--no-verify` on `git push` when pushing rebased feature branches.
+
 ---
 
 ## CI & CLI Tools
@@ -187,14 +201,21 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ---
 
+### In-Flight gclient Staging Directories
+* **Rule**: Treat `_gclient_*` directories in `third_party/` as active staging targets rather than stale or failed build debris. Never delete them or diagnose missing dependencies without first checking for running sync or clone processes (`pgrep -fl "gclient|git-remote"`).
+* **Rationale**: `gclient` clones repositories into temporary `_gclient_<name>_<hash>` directories and atomically renames them only upon completion. Deleting staging directories while clones are in progress corrupts active network transfers and causes subsequent build tools to fail with missing dependency errors.
+
+---
+
 ### Xcode Metal Toolchain Resolution
 * **Rule**: When compiling Metal shaders (`.metal` -> `.metallib`) on macOS hosts with Xcode downloadable components where `metal` is not in the default path, set `TOOLCHAINS=Metal` to direct `xcrun` to the mounted Metal toolchain.
 
 ---
 
 ### Asynchronous Monitoring: Watch Mode over Polling
-* **Rule**: When monitoring the status of any background process, PR build, or external resource, always prefer using a blocking "watch" mode (e.g., `gh pr checks <pr> --watch`, wait commands, or event-based listeners) in a background task over periodic polling loops.
-* **Exceptions**: If polling is used, you must explicitly document the justification (e.g., watch mode is unsupported by the tool, or the resource lacks streamable event APIs).
+* **Rule**: When monitoring the status of any background process, PR build, or external resource, always prefer using a blocking "watch" or "collect" command (e.g., `bb collect` or event-based listeners) in a background task over periodic polling loops.
+* **LUCI Build Monitoring**: Use `bb collect $(bb ls -t buildset:sha/git/<sha> flutter/try -id)` to wait for presubmit builds to finish.
+* **PR Checks Watch Limitation**: Avoid using `gh pr checks <pr> --watch` on Flutter repo PRs because the `Merge Queue Guard` status check remains indefinitely in a `pending` state for draft/non-queued PRs, preventing the command from ever exiting.
 
 ---
 
@@ -216,6 +237,17 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ---
 
+### Jetski CLI Settings File
+* **Settings Location**: Jetski CLI settings and command approval configurations are stored in `~/.gemini/jetski/cli/settings.json`.
+
+---
+
+### Concurrent CLI Session Token Overwrites
+* **Rule**: When OAuth scopes change or backend routing flips (e.g. `ACCESS_TOKEN_SCOPE_INSUFFICIENT`), terminate older background CLI sessions across other workspaces before re-authenticating.
+* **Rationale**: Lingering background CLI instances refresh credentials hourly using their original, unscoped refresh tokens and write them back to the shared macOS Keychain, clobbering updated tokens and causing new sessions to fail.
+
+---
+
 ## Agent Guidelines & Steering
 
 ### Course Corrections & General Steering
@@ -230,6 +262,10 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **PR Comment Simplification**: When writing PR comments with build performance tables, keep tables intact but keep surrounding explanations extremely simple, direct, and free of subheadings or bulleted notes, integrating any VM variance disclaimers naturally within the prose.
 * **Triage Uncommitted Check**: When resolving comments, always verify code changes are committed and pushed before proposing to post responses or resolve threads on GitHub, to keep the remote branch in sync with review comments.
 * **Scoped Test Hardware Feature Guarding**: Ensure hardware/platform capability skip guards (e.g. `!DoesSupportWideGamutTests()`) are scoped strictly to tests requesting that specific feature (`switches.enable_wide_gamut`) rather than unconditionally skipping entire test backends across non-matching host architectures (such as `Mac_x64`).
+* **File Creation Tooling**: Always use dedicated file creation tools (`write_to_file`) rather than shell redirection or `cat` heredocs when creating or overwriting files in the workspace.
+* **No Scripted VCS Push**: Do not run `git commit` or `git push` via auxiliary Dart or shell scripts. Use direct commands or interactive resolution menus.
+* **Multi-line Automation Scripts to Scratch**: Always write multi-line scripts or automated test execution loops to dedicated scratch files before executing them, rather than executing large inline command-line blocks directly.
+* **Handling Authentication Errors**: Never skirt around authentication problems or disable tooling configurations (such as disabling RBE or bypassing depot_tools auto-updates) when encountering credential errors. Ask the user to refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
 
  
 
