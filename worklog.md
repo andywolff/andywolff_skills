@@ -42,16 +42,25 @@ PR descriptions or code comments instead.
   claims, credit prior reviewers, and colocate bug reports with tests.
 - [ ] **PR Review Response Guidance**: Confirm direct fixes concisely without restating diff mechanics, cite upstream pipeline prerequisites over speculative code promises, and prune internal symbol noise in discussions.
 - [ ] **Asynchronous Test Snapshot Awaiting**: Always `await` asynchronous test helper calls that trigger raster snapshots (`toImage`) to prevent fast event loops from overflowing transient host buffer arenas and racing in-flight GPU execution.
+- [ ] **Fail-Fast PR Review Planning**: Order review plans from cheapest static
+  checks (logic, include guards, conventions, and style) to expensive operations
+  (compilation, test runs) for early short-circuiting, maintaining 1-to-1
+  checklist parity.
 - [ ] **Vulkan Memory Type Selection**: Select memory type indices by querying `VkPhysicalDeviceMemoryProperties` rather than bitwise ANDing property flag enums against requirement bitmasks.
 - [ ] **Offscreen Render Target Cache Lifecycle**: Purge cached offscreen render targets between tests and under system memory pressure rather than tracking GPU completion fences.
 - [ ] **Offscreen Render Target Cache Pixel Format Matching**: Include the target pixel format in render target cache descriptors to avoid reusing wide-gamut textures for standard sRGB allocations or vice versa.
 - [ ] **Multi-line Automation Scripts**: Write multi-line automation scripts or test loops to the dedicated scratch directory rather than executing large inline shell blocks.
 - [ ] **Pre-push Hook Merge-Base Scope**: Keep local `origin/master` updated or use `--no-verify` when pushing to prevent Flutter engine's `pre-push` hook from formatting stale intervening upstream commits.
 - [ ] **Handling Authentication Errors**: Never skirt around authentication errors (such as disabling RBE or suppressing updates) - ask the user to log in or refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
+- [ ] **In-Source Comments vs Commit Context**: Document current behavior and contracts in code comments; keep historical diff narratives and bug descriptions in commit messages and PR descriptions.
+- [ ] **Redundant Wrapper Elimination**: Delete obsolete or single-call custom wrappers when refactoring simplifies them into standard library calls.
 - [ ] **Jetski CLI Settings**: Configure Jetski CLI settings and command approvals in `~/.gemini/jetski/cli/settings.json`.
 - [ ] **Concurrent CLI Session Token Overwrites**: Terminate stale background CLI sessions when backend OAuth scopes change to prevent periodic background refreshes from overwriting system keychain tokens.
+- [ ] **Verifying In-Tree Test Names**: Empirically verify exact test fixture and test case names in source files before referencing them in review comments.
+- [ ] **Engine-to-Framework API Roll Boundaries**: Do not consume new `dart:ui` APIs outside `engine/` within the same pull request. In merge queue and postsubmit check runs, static analysis evaluates against prebuilt baseline engine artifacts, requiring engine changes to land and roll before framework consumption.
 - [ ] **In-Flight gclient Staging Directories**: Never delete `_gclient_*` directories without verifying running sync processes with `pgrep -fl "gclient|git-remote"`. These directories represent active repository clones in progress, not corrupted debris.
 - [ ] **Wide-Gamut Golden Screenshot Quantization**: Skia Gold ingests 8-bit PNGs, so Impeller 10-bit wide-gamut surfaces (`kB10G10R10A10XR`) are quantized and clamped to 8-bit DeviceRGB by `MetalGoldenScreenshotter`. Test lossless out-of-gamut float coordinates directly with `rawExtendedRgba128` instead.
+- [ ] **Verbatim Reland Isolation**: When relanding a reverted pull request, keep the reland PR verbatim to the original landing. Split subsequent reviewer feedback or speculative adjustments into dedicated follow-up PRs to prevent conflating reland regressions with new changes.
 
 ---
 
@@ -274,6 +283,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **No Scripted VCS Push**: Do not run `git commit` or `git push` via auxiliary Dart or shell scripts. Use direct commands or interactive resolution menus.
 * **Multi-line Automation Scripts to Scratch**: Always write multi-line scripts or automated test execution loops to dedicated scratch files before executing them, rather than executing large inline command-line blocks directly.
 * **Handling Authentication Errors**: Never skirt around authentication problems or disable tooling configurations (such as disabling RBE or bypassing depot_tools auto-updates) when encountering credential errors. Ask the user to refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
+* **Verbatim Reland Isolation**: When relanding a reverted pull request, keep the reland PR verbatim to the original landing. Split subsequent reviewer feedback or speculative adjustments into dedicated follow-up PRs to prevent conflating reland regressions with new changes.
 
  
 
@@ -364,4 +374,46 @@ Detailed instructions for running Android instrumented tests with a local engine
   unsolicited code promises. Favor plain conversational concepts (such as "10-bit
   images" rather than internal enum types) with compact parenthetical references
   (such as `(example: foo_test.dart)`).
+
+---
+
+### PR Review Planning & Execution
+* **Fail-Fast Review Plan Phasing**: Structure review plans into prioritized
+  phases where cheap, zero-cost static inspections (logic correctness, include
+  guards, target definitions, codebase conventions, loop isolation, and
+  formatting) execute first. Run heavy operations like local compilation and
+  test execution only after static checks pass, allowing deal-breaking issues
+  to short-circuit the review immediately.
+* **Auditing Nearby Codebase Conventions**: Explicitly incorporate verification
+  steps comparing proposed changes against nearby patterns (such as parameter
+  passing idioms, defensive check invariants, and module boundary includes)
+  rather than evaluating diffs in isolation.
+* **Execution Checklist Parity**: Maintain strict 1-to-1 parity between review
+  plan steps and checklist items to ensure thorough, traceable verification.
+* **In-Source Comments vs Commit Context**: Source code comments should describe
+  current contracts, invariants, and non-obvious design rationale. Avoid diff
+  narratives or historical bug explanations (such as "The previous form compared
+  N - 1 bytes..."), which belong in git commit messages and PR descriptions instead.
+* **Eliminating Obsolete Wrappers**: When refactoring simplifies a helper into
+  a trivial standard library call (such as `std::strcmp`), delete the helper
+  function entirely and update call sites directly rather than leaving behind
+  misnamed or pass-through wrappers.
+* **Verifying In-Tree Test Names**: Empirically verify exact test fixture and
+  test case names in source files before referencing them in review comments,
+  preventing references to hallucinated or approximate test names.
+* **Rapid Snapshot Test Loops**: In test suites running back-to-back offscreen
+  raster snapshots (`toImage`) in tight synchronous loops, reduce loop density
+  or insert asynchronous pauses. Rapid un-fenced resets of transient host buffers
+  race against in-flight GPU command buffer reads on test runner VMs, creating
+  flaky subpixel mismatches in strict pixel-equality matchers.
+* **Engine-to-Framework API Roll Boundaries**: When introducing new `dart:ui`
+  APIs, submit the engine changes and framework changes in separate pull
+  requests. In GitHub Merge Queue and postsubmit environments, `Tree Analyze`
+  evaluates against prebuilt baseline engine artifacts rather than local engine
+  source edits. Attempting to consume new engine APIs in `packages/` or outside
+  `engine/` within the same PR triggers `override_on_non_overriding_member`
+  and `undefined_method` errors in the merge queue.
+
+
+
 
