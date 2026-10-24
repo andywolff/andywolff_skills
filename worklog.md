@@ -418,6 +418,9 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ### Skill Authoring & Repository Portability
 * **Portability & Environment Overrides**: Never commit hardcoded absolute user home paths (e.g. `/Users/<user>`) in skills, scripts, or configuration files (`skills_sources.txt`). Resolve paths dynamically relative to the executing script or via environment variables (`FLUTTER_ENGINE_OUT`, `FLUTTER_ROOT`, `SKILLS_CENTRAL_DIR`), falling back to sibling directory searches.
+* **Symlink Resolution & Repo Root Discovery**: When companion scripts in symlinked skills resolve repository roots (e.g., searching for `.ci.yaml` or `.editorconfig`), inspect `Directory.current`, `FLUTTER_ROOT`, or parent directories first before relying on `Platform.script`, which resolves to the canonical symlink target.
+* **Authoritative PR Merge Status**: When verifying branch merge states in Git worktrees, combine `git merge-base` with GitHub PR metadata (`gh pr list --state all`) and upstream commit search (`git log --grep="(#$pr)"`). Squashed PR merges cannot be determined reliably by `git diff upstream...branch` alone because upstream master may contain newer commits in the touched files.
+* **Central vs Worktree Path Conventions**: In personal skills, document both the central repository path (`.agents/skills/<name>`) and the target worktree symlink path (`.agents/skills/personal-<name>`) so agents invoke tools correctly from either workspace context.
 * **Third-Person Intent Triggers**: Align skill `description` frontmatter to clear third-person action triggers (e.g. "Use this skill when the user asks to...") to ensure LLMs correctly match user intent during tool selection.
 * **Command Scripting Limits**: For automation or shell operations exceeding three lines, write them to a dedicated script file rather than executing inline command strings to ensure clean execution and maintain auto-approvability.
 
