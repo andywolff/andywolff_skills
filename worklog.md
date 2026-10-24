@@ -32,6 +32,10 @@ PR descriptions or code comments instead.
   overriding repo-wide rules during analysis runs.
 - [ ] **Test Canvas Texture Readback Usage**: Include `TextureUsage::kShaderRead` when creating mock test canvases that emulate non-framebuffer-fetch readback paths on Metal/Vulkan.
 - [ ] **Xcode Metal Toolchain**: Set `TOOLCHAINS=Metal` when compiling Metal shaders on macOS hosts with Xcode downloadable toolchains.
+- [ ] **Vulkan Memory Type Selection**: Select memory type indices by querying `VkPhysicalDeviceMemoryProperties` rather than bitwise ANDing property flag enums against requirement bitmasks.
+- [ ] **Offscreen Render Target Cache Lifecycle**: Purge cached offscreen render targets between tests and under system memory pressure rather than tracking GPU completion fences.
+- [ ] **Offscreen Render Target Cache Pixel Format Matching**: Include the target pixel format in render target cache descriptors to avoid reusing wide-gamut textures for standard sRGB allocations or vice versa.
+- [ ] **Wide-Gamut Golden Screenshot Quantization**: Skia Gold ingests 8-bit PNGs, so Impeller 10-bit wide-gamut surfaces (`kB10G10R10A10XR`) are quantized and clamped to 8-bit DeviceRGB by `MetalGoldenScreenshotter`. Test lossless out-of-gamut float coordinates directly with `rawExtendedRgba128` instead.
 
 ---
 
@@ -65,6 +69,46 @@ PR descriptions or code comments instead.
 * **Rationale**: GLFW (`glfwVulkanSupported()`) and Impeller resolve
   `libvulkan.dylib` via `dlopen`. Setting `DYLD_FALLBACK_LIBRARY_PATH` directs
   dynamic linking to the SDK without overriding system Metal or OS libraries.
+
+---
+
+### Vulkan Memory Type Selection
+* **Rule**: When selecting a memory type index for Vulkan allocations, iterate
+  through `VkPhysicalDeviceMemoryProperties.memoryTypes` and verify that
+  `(propertyFlags & required_flags) == required_flags`. Avoid bitwise ANDing
+  multiple distinct `VkMemoryPropertyFlagBits` together against
+  `VkMemoryRequirements.memoryTypeBits`.
+* **Rationale**: `VkMemoryRequirements.memoryTypeBits` is an index bitmask into
+  the physical device memory types array, not a combination of property flags.
+  ANDing multiple property flags (such as `HOST_VISIBLE` and `HOST_COHERENT`)
+  directly results in zero, leading to undefined behavior with `__builtin_ctz`
+  or invalid allocation indices.
+
+---
+
+### Offscreen Render Target Cache Lifecycle & Memory Management
+* **Rule**: Manage offscreen render target caches by purging entries between
+  test runs and under memory pressure, rather than tracking GPU completion fences.
+* **Rationale**: Metal driver hazard tracking and Vulkan single-queue submission
+  order with render pass pipeline barriers prevent GPU race conditions in real
+  applications. Order dependencies in test environments stem from leaked cache
+  state across consecutive tests, which is resolved by purging the cache at
+  test boundaries.
+
+---
+
+### Offscreen Render Target Cache Pixel Format Matching
+* **Rule**: Include the color attachment pixel format in `RenderTargetConfig`
+  comparisons and hash keys within `RenderTargetCache`.
+* **Rationale**: In applications with wide color gamut enabled (such as Display
+  P3 on macOS/iOS), the onscreen window surface allocates wide-gamut textures
+  while subpasses or raster caches may request standard sRGB textures of the
+  exact same dimensions. Omitting pixel format from the cache key causes
+  mismatched textures to be recycled, triggering blit validation failures.
+
+### Wide-Gamut Golden Screenshot Quantization
+* **Rule**: Do not rely on Skia Gold or standard PNG golden image comparators to verify 10-bit color depth or out-of-gamut extended range coordinates. Inspect raw `rawExtendedRgba128` floating-point pixel buffers directly for lossless numerical verification.
+* **Rationale**: Skia Gold digests and compares 8-bit per channel PNGs. Metal golden screenshotters convert 10-bit wide-gamut render targets (`kB10G10R10A10XR`) to standard 8-bit DeviceRGB PNGs via CoreImage (`CIContext.createCGImage`), quantizing and clamping extended values prior to upload.
 
 ---
 
