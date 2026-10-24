@@ -2,10 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 
 const Map<String, String> builders = <String, String>{
-  'Linux_android_emu_vulkan_stable_android_hardware_smoke_vulkan_tests': 'Vulkan Host-Driven (Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_tests)',
-  'Linux_android_emu_android_hardware_smoke_opengles_tests': 'OpenGLES Host-Driven (Linux_android_emu android_hardware_smoke_opengles_tests)',
-  'Linux_android_emu_vulkan_stable_android_hardware_smoke_vulkan_instrumented_tests': 'Vulkan Instrumented (Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_instrumented_tests)',
-  'Linux_android_emu_android_hardware_smoke_opengles_instrumented_tests': 'OpenGLES Instrumented (Linux_android_emu android_hardware_smoke_opengles_instrumented_tests)',
+  'Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_tests':
+      'Vulkan Host-Driven (Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_tests)',
+  'Linux_android_emu android_hardware_smoke_opengles_tests':
+      'OpenGLES Host-Driven (Linux_android_emu android_hardware_smoke_opengles_tests)',
+  'Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_instrumented_tests':
+      'Vulkan Instrumented (Linux_android_emu_vulkan_stable android_hardware_smoke_vulkan_instrumented_tests)',
+  'Linux_android_emu android_hardware_smoke_opengles_instrumented_tests':
+      'OpenGLES Instrumented (Linux_android_emu android_hardware_smoke_opengles_instrumented_tests)',
 };
 
 const Map<String, String> environments = <String, String>{
@@ -36,8 +40,8 @@ void main(List<String> args) {
     '## Executive Summary',
     'The following table summarizes the success rates for all builders across',
     'the environments:\n',
-    '| Environment | Shard | Success Rate | Failures | AGP Ignored | Notes / Warnings |',
-    '| --- | --- | --- | --- | --- | --- |',
+    '| Environment | Shard | Test Pass Rate | Passed / Completed | Test Failures | Filtered Out | Notes / Warnings |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
   ];
 
   final summaryRows = <List<dynamic>>[];
@@ -60,6 +64,8 @@ void main(List<String> args) {
       final failures = <Map<String, dynamic>>[];
       final failureSummaries = <String>[];
       int ignoredAgpCount = 0;
+      int ignoredInfraCount = 0;
+      int ignoredCanceledCount = 0;
 
       for (final run in runs) {
         if (validRuns.length >= 100) break;
@@ -67,12 +73,22 @@ void main(List<String> args) {
         final status = run['status'] as String?;
         final buildId = run['id'] as String?;
 
-        if (status == 'SUCCESS') {
-          validRuns.add(run);
+        if (status == 'STARTED' || status == 'SCHEDULED') {
           continue;
         }
 
-        if (status == 'STARTED' || status == 'SCHEDULED') {
+        if (status == 'CANCELED') {
+          ignoredCanceledCount++;
+          continue;
+        }
+
+        if (status == 'INFRA_FAILURE') {
+          ignoredInfraCount++;
+          continue;
+        }
+
+        if (status == 'SUCCESS') {
+          validRuns.add(run);
           continue;
         }
 
@@ -83,49 +99,50 @@ void main(List<String> args) {
           continue;
         }
 
+        if (isBotSetupFailure(summary)) {
+          ignoredInfraCount++;
+          continue;
+        }
+
         validRuns.add(run);
         failures.add(run);
         failureSummaries.add(summary);
       }
 
       final totalValid = validRuns.length;
-      final successCount = validRuns
-          .where((r) => r['status'] == 'SUCCESS')
-          .length;
-      final successRate = totalValid > 0
-          ? (successCount / totalValid * 100)
-          : 0.0;
+      final successCount = validRuns.where((r) => r['status'] == 'SUCCESS').length;
+      final successRate = totalValid > 0 ? (successCount / totalValid * 100) : 0.0;
 
       String timeWindowStr = 'N/A';
       String? latestTimeStr;
       if (validRuns.isNotEmpty) {
         latestTimeStr = validRuns.first['createTime'] as String?;
         final latestTime = formatTime(latestTimeStr);
-        final earliestTime = formatTime(
-          validRuns.last['createTime'] as String?,
-        );
+        final earliestTime = formatTime(validRuns.last['createTime'] as String?);
         timeWindowStr = '**$earliestTime** to **$latestTime**';
       }
 
       String warningNote = '';
       if (envCode == 'staging' && isOldBuild(latestTimeStr)) {
-        warningNote = '⚠️ **Warning**: Staging results are outdated (>7 days). Shard has likely been promoted out of bringup (removed `bringup: true` from `.ci.yaml`).';
+        warningNote =
+            '⚠️ **Warning**: Staging results are outdated (>7 days). Shard has likely been promoted out of bringup (removed `bringup: true` from `.ci.yaml`).';
       }
 
       summaryRows.add([
         envName,
         builderTitle,
         '`${successRate.toStringAsFixed(2)}%`',
+        '$successCount / $totalValid',
         failures.length,
-        ignoredAgpCount,
+        'Canceled: $ignoredCanceledCount, Infra: $ignoredInfraCount, AGP: $ignoredAgpCount',
         warningNote.isNotEmpty ? warningNote : 'None',
       ]);
 
       detailedReports.addAll([
         '## $builderTitle',
         '- **Time Window**: $timeWindowStr',
-        '- **Success Rate**: `${successRate.toStringAsFixed(2)}%` (Successes: $successCount, Failures: ${failures.length})',
-        '- **AGP Migration Failures Ignored**: $ignoredAgpCount',
+        '- **Test Pass Rate**: `${successRate.toStringAsFixed(2)}%` ($successCount passed / $totalValid completed test runs)',
+        '- **Filtered Out**: $ignoredCanceledCount Canceled, $ignoredInfraCount Infra Outages, $ignoredAgpCount AGP Failures',
         if (warningNote.isNotEmpty) '- **Note**: $warningNote',
         '',
       ]);
@@ -146,11 +163,8 @@ void main(List<String> args) {
           final createTime = formatTime(run['createTime'] as String?);
           final category = categorizeFailure(status, summary);
 
-          final buildLink =
-              '[$buildNumber](https://ci.chromium.org/b/$buildId)';
-          detailedReports.add(
-            '| $buildLink | `$buildId` | $createTime | `$status` | $category |',
-          );
+          final buildLink = '[$buildNumber](https://ci.chromium.org/b/$buildId)';
+          detailedReports.add('| $buildLink | `$buildId` | $createTime | `$status` | $category |');
         }
         detailedReports.add('');
       } else {
@@ -162,7 +176,7 @@ void main(List<String> args) {
 
   for (final row in summaryRows) {
     reportMd.add(
-      '| ${row[0]} | ${row[1]} | ${row[2]} | ${row[3]} | ${row[4]} | ${row[5]} |',
+      '| ${row[0]} | ${row[1]} | ${row[2]} | ${row[3]} | ${row[4]} | ${row[5]} | ${row[6]} |',
     );
   }
 
@@ -186,13 +200,8 @@ bool isCommandAvailable(String command) {
   }
 }
 
-/// Converts a builder code name to its queryable representation (e.g. replacing underscores).
-String getBuilderQueryName(String builderCode) {
-  final displayName = builderCode.replaceAll('_', ' ');
-  final parts = displayName.split(' ');
-  if (parts.length <= 1) return displayName;
-  return '${parts[0]} ${parts.sublist(1).join(' ')}';
-}
+/// Converts a builder code name to its queryable representation.
+String getBuilderQueryName(String builderCode) => builderCode;
 
 /// Formats UTC timestamp strings into a clean representation.
 String formatTime(String? tStr) {
@@ -221,16 +230,13 @@ bool isOldBuild(String? tStr) {
   }
 }
 
-/// Queries Buildbucket for the last 150 builds of the specified builder.
-List<Map<String, dynamic>> fetchBuilds(
-  String envCode,
-  String builderQueryName,
-) {
+/// Queries Buildbucket for the last 300 builds of the specified builder.
+List<Map<String, dynamic>> fetchBuilds(String envCode, String builderQueryName) {
   try {
     final result = Process.runSync('bb', [
       'ls',
       '-n',
-      '150',
+      '300',
       '-json',
       'flutter/$envCode/$builderQueryName',
     ]);
@@ -283,10 +289,22 @@ bool isAgpFailure(String summary) {
       summary.contains('kotlinOptions');
 }
 
+/// Filters out host bot/VM initialization/dependency download outages.
+bool isBotSetupFailure(String summary) {
+  return summary.contains('download dependencies') ||
+      summary.contains('download dependencies (2)') ||
+      summary.contains('download avd package') ||
+      summary.contains('Ensure /b/s/w/ir/x/w/rc/flutter_logs_dir');
+}
+
 /// Categorizes a build failure based on its status and summary.
 String categorizeFailure(String? status, String summary) {
-  if (summary.contains('download dependencies') ||
-      summary.contains('download dependencies (2)')) {
+  if (summary.contains('Skia Gold received an unapproved image') ||
+      summary.contains('Untriaged or negative image') ||
+      summary.contains('flutter-gold.skia.org')) {
+    return 'Untriaged Golden / Skia Gold Mismatch';
+  }
+  if (summary.contains('download dependencies') || summary.contains('download dependencies (2)')) {
     return 'Infrastructure Failure (Dependency Download)';
   }
   if (status == 'CANCELED') {

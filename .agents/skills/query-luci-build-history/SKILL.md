@@ -89,6 +89,10 @@ dart .agents/skills/personal-query-luci-build-history/scripts/analyze_flakiness.
 4. **AGP Mitigation Exclusion**: Automatically parses build summaries to identify
    and filter out compile-time errors caused by AGP 9 migration, establishing
    a clean baseline of actual test failures.
+5. **CANCELED & VM Outage Filtering**: Automatically excludes presubmit
+   developer cancellations (`CANCELED`) and host bot provisioning outages
+   (`INFRA_FAILURE` / package download timeouts), extending the search window
+   up to 300 builds to measure the true pass rate across 100 completed test runs.
 
 
 ### 4. Printing Clean Status Summaries
@@ -152,11 +156,21 @@ Retrieve the log output (stdout/stderr) for the failing step. To avoid console t
 bb log <BUILD_ID_OR_PATH> "<STEP_NAME>" stdout > step_log.txt
 ```
 
-#### C. Analyzing Skia Gold Golden Mismatches
+#### C. Analyzing Skia Gold Golden Mismatches & Untriaged Images
 For graphics/golden image comparison failures, inspect the test stdout:
-* **Gold Triaging URLs**: Search the logs for `https://flutter-gold.skia.org/detail?...` URLs. **You MUST extract and present these links directly in your final response/diagnosis to the user** so they can easily click and view the mismatched images in their browser.
-* **Inspect Digest Size**: A very small PNG output size (e.g., ~1.4 KB compared to the typical 10 KB–20 KB) is a strong indicator of a completely blank or uniform (usually black) screenshot.
-* **Identify System-Level Compositing Issues**: If multiple distinct test scenarios (e.g. different platform view composition modes) fail by producing the **exact same image digest**, this indicates a system-level rendering or compositing failure (such as an emulator GPU driver or Vulkan surface composition flake) rather than a code defect.
+* **Untriaged Presubmit/Post-Submit Goldens**:
+  * If a PR alters visual rendering or introduces a new test case without triaging the image digest in presubmit, Skia Gold will fail with:
+    `SkiaException: Skia Gold received an unapproved image in post-submit testing.`
+  * The log will contain links in the format:
+    `https://flutter-gold.skia.org/detail?grouping=name%3D...&digest=...`
+  * **Action**: You MUST extract and present these links directly to the user. In presubmit, images are triaged on the Flutter Gold web UI by the PR author. In post-submit, untriaged images require approval by a committer or revert.
+* **Evaluating PR Outcomes & Test Value**:
+  When investigating presubmit golden failures on a PR, determine how the PR was resolved:
+  1. **Intentional Visual Change (Golden Approved)**: The PR author reviewed the visual diff on Skia Gold, approved the new digest as intended behavior, re-ran presubmit, and merged successfully.
+  2. **Unintended Visual Regression (Fix Committed)**: The author noticed the golden failure, identified that their code introduced an unintended visual regression, committed a fix to restore the original rendering/golden match, and merged without updating goldens. **This demonstrates the smoke test suite successfully catching a real regression in presubmit.**
+  3. **Inspection via `gh` CLI**: Run `gh pr view <PR_NUMBER> --comments` or `git log upstream/master --grep="<PR_NUMBER>"` to verify whether the author approved goldens or committed code remediations before landing.
+* **Inspect Digest Size for Blank Screens**: A very small PNG output size (e.g., ~1.4 KB compared to the typical 10 KB–20 KB) indicates a completely blank or uniform (usually black) screenshot.
+* **Identify System-Level Compositing Issues**: If multiple distinct test scenarios (e.g. different platform view composition modes) fail by producing the **exact same image digest**, this indicates a system-level rendering or compositing failure (such as an emulator GPU driver or Vulkan surface composition collapse) rather than a code defect.
 
 
 ### 9. Waiting for Builds to Complete (Watch/Collect Mode)
