@@ -224,6 +224,12 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ---
 
+### Authentication Blockers & Evasive Workarounds
+* **Rule**: When `gclient`, `et fetch`, or CIPD fails due to expired credentials (such as `gcert`), the agent must immediately stop and prompt the user to authenticate.
+* **Anti-Pattern**: Never switch branches or worktrees to find a pre-compiled engine build to bypass an authentication failure; doing so risks testing against stale or incompatible engine binaries and invalidates the target PR verification.
+
+---
+
 ### Xcode Metal Toolchain Resolution
 * **Rule**: When compiling Metal shaders (`.metal` -> `.metallib`) on macOS hosts with Xcode downloadable components where `metal` is not in the default path, set `TOOLCHAINS=Metal` to direct `xcrun` to the mounted Metal toolchain.
 
