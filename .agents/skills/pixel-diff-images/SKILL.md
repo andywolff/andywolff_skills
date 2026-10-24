@@ -1,8 +1,8 @@
 ---
 name: pixel-diff-images
 description: >-
-  Compare two image files, crop regions of interest (ROI), calculate channel deltas,
-  and generate visual difference heatmaps.
+  Use this skill when the user wants to compare two image files, crop regions
+  of interest (ROI), calculate channel deltas, and generate visual difference heatmaps.
 ---
 
 # Pixel Differential Image Analysis Guide
@@ -27,7 +27,21 @@ diff heatmap.
 
 ## Running Differential Comparison
 
-Run the companion `compare_images.dart` script using `flutter test`:
+### Option A: Standalone CLI Runner (Recommended)
+
+Fast, lightweight runner with no Flutter dependencies or compilation overhead:
+
+```bash
+python3 .agents/skills/pixel-diff-images/scripts/diff_images.py \
+  --baseline /path/to/baseline.png \
+  --candidate /path/to/candidate.png \
+  --diff /path/to/diff_heatmap.png \
+  --crop 0,0,100,100
+```
+
+### Option B: Flutter Test Runner
+
+Run via `flutter test` within a Flutter package repository context:
 
 ```bash
 flutter test \
@@ -35,14 +49,17 @@ flutter test \
   --dart-define=CANDIDATE_PNG=/path/to/candidate.png \
   --dart-define=DIFF_PNG=/path/to/diff_heatmap.png \
   --dart-define=CROP_LTRB=0,0,100,100 \
-  .agents/skills/personal-pixel-diff-images/scripts/compare_images.dart
+  .agents/skills/pixel-diff-images/scripts/compare_images.dart
 ```
 
+*(Note: In target repositories symlinked via `manage-personal-skills`, the directory path is `.agents/skills/personal-pixel-diff-images/...`)*
+
 ### Parameters:
-* **`BASELINE_PNG`** *(required)*: Absolute or relative path to the baseline reference image.
-* **`CANDIDATE_PNG`** *(required)*: Absolute or relative path to the candidate/new image to compare.
-* **`DIFF_PNG`** *(optional)*: Output path to save the visual diff heatmap PNG.
-* **`CROP_LTRB`** *(optional)*: Comma-separated Left, Top, Right, Bottom integer coordinates to crop a specific Region of Interest (e.g. `0,0,50,50`). If omitted, compares the full image. When `CROP_LTRB` and `DIFF_PNG` are provided, the script automatically exports `${DIFF_PNG}_baseline_crop.png` and `${DIFF_PNG}_candidate_crop.png` alongside the diff heatmap.
+* **`--baseline` / `BASELINE_PNG`** *(required)*: Absolute or relative path to the baseline reference image.
+* **`--candidate` / `CANDIDATE_PNG`** *(required)*: Absolute or relative path to the candidate/new image to compare.
+* **`--diff` / `DIFF_PNG`** *(optional)*: Output path to save the visual diff heatmap PNG.
+* **`--crop` / `CROP_LTRB`** *(optional)*: Comma-separated Left, Top, Right, Bottom integer coordinates to crop a specific Region of Interest (e.g. `0,0,50,50`). If omitted, compares the full image. When crop coordinates and diff path are provided, the script automatically exports `${DIFF_PNG}_baseline_crop.png` and `${DIFF_PNG}_candidate_crop.png` alongside the diff heatmap.
+* **`--threshold`** *(optional, CLI runner only)*: Maximum channel delta tolerance before marking a diff (default: 0).
 
 ---
 
