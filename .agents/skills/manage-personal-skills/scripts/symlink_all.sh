@@ -63,11 +63,11 @@ for TARGET_REPO in "${TARGET_REPOS[@]}"; do
   fi
   
   for SOURCE_DIR in "${SOURCES[@]}"; do
-    # Skip if source directory is identical to target directory to avoid self-linking
+    # Skip if source directory is identical to target directory or inside target repo
     SOURCE_DIR_ABS=$(cd "$SOURCE_DIR" && pwd -P)
     FLUTTER_DIR_ABS=$(cd "$FLUTTER_DIR" && pwd -P)
-    if [ "$SOURCE_DIR_ABS" = "$FLUTTER_DIR_ABS" ]; then
-      echo "Skipping source directory $SOURCE_DIR (source matches target directory)"
+    if [ "$SOURCE_DIR_ABS" = "$FLUTTER_DIR_ABS" ] || [[ "$SOURCE_DIR_ABS" == "$TARGET_REPO_ABS"* ]]; then
+      echo "Skipping source directory $SOURCE_DIR (source matches or is inside target repository)"
       continue
     fi
     echo ""
@@ -80,7 +80,7 @@ for TARGET_REPO in "${TARGET_REPOS[@]}"; do
         symlink_path="$FLUTTER_DIR/personal-$skill_name"
         
         echo "  - Creating symlink for: personal-$skill_name"
-        ln -sf "$skill_path" "$symlink_path"
+        ln -sfn "$skill_path" "$symlink_path"
       fi
     done
   done
@@ -90,21 +90,21 @@ for TARGET_REPO in "${TARGET_REPOS[@]}"; do
   # Symlink worklog.md
   if [ -f "$SKILLS_REPO_ROOT/worklog.md" ]; then
     echo "  - Creating symlink for: worklog.md"
-    ln -sf "$SKILLS_REPO_ROOT/worklog.md" "$TARGET_REPO/worklog.md"
+    ln -sfn "$SKILLS_REPO_ROOT/worklog.md" "$TARGET_REPO/worklog.md"
   fi
   
   # Symlink .agents/AGENTS.md
   if [ -f "$SKILLS_REPO_ROOT/.agents/AGENTS.md" ]; then
     echo "  - Creating symlink for: .agents/AGENTS.md"
     mkdir -p "$TARGET_REPO/.agents"
-    ln -sf "$SKILLS_REPO_ROOT/.agents/AGENTS.md" "$TARGET_REPO/.agents/AGENTS.md"
+    ln -sfn "$SKILLS_REPO_ROOT/.agents/AGENTS.md" "$TARGET_REPO/.agents/AGENTS.md"
   fi
 
   # Symlink communication.md rule
   if [ -f "$SKILLS_REPO_ROOT/communication.md" ]; then
     echo "  - Creating symlink for: .agents/rules/communication.md"
     mkdir -p "$TARGET_REPO/.agents/rules"
-    ln -sf "$SKILLS_REPO_ROOT/communication.md" "$TARGET_REPO/.agents/rules/communication.md"
+    ln -sfn "$SKILLS_REPO_ROOT/communication.md" "$TARGET_REPO/.agents/rules/communication.md"
   fi
   
   # Configure Git local exclusions
