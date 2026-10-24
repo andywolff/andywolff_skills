@@ -32,6 +32,7 @@ PR descriptions or code comments instead.
   overriding repo-wide rules during analysis runs.
 - [ ] **Test Canvas Texture Readback Usage**: Include `TextureUsage::kShaderRead` when creating mock test canvases that emulate non-framebuffer-fetch readback paths on Metal/Vulkan.
 - [ ] **Xcode Metal Toolchain**: Set `TOOLCHAINS=Metal` when compiling Metal shaders on macOS hosts with Xcode downloadable toolchains.
+- [ ] **Asynchronous Test Snapshot Awaiting**: Always `await` asynchronous test helper calls that trigger raster snapshots (`toImage`) to prevent fast event loops from overflowing transient host buffer arenas and racing in-flight GPU execution.
 - [ ] **Vulkan Memory Type Selection**: Select memory type indices by querying `VkPhysicalDeviceMemoryProperties` rather than bitwise ANDing property flag enums against requirement bitmasks.
 - [ ] **Offscreen Render Target Cache Lifecycle**: Purge cached offscreen render targets between tests and under system memory pressure rather than tracking GPU completion fences.
 - [ ] **Offscreen Render Target Cache Pixel Format Matching**: Include the target pixel format in render target cache descriptors to avoid reusing wide-gamut textures for standard sRGB allocations or vice versa.
@@ -85,6 +86,16 @@ PR descriptions or code comments instead.
   or invalid allocation indices.
 
 ---
+
+### Asynchronous Test Snapshot Awaiting
+* **Rule**: In framework and engine unit tests, ensure all asynchronous helper
+  calls that perform raster snapshots (`toImage`) are explicitly `await`ed before
+  the test callback finishes.
+* **Rationale**: Unawaited snapshot loops run synchronously within the event loop
+  tick, triggering dozens of snapshots in rapid succession. When host buffer
+  capacity is reset per snapshot, rapid unawaited resets cycle through the
+  fixed-size host buffer arena and overwrite uniform and vertex data while
+  earlier asynchronous GPU command buffers are still executing.
 
 ### Offscreen Render Target Cache Lifecycle & Memory Management
 * **Rule**: Manage offscreen render target caches by purging entries between
@@ -155,8 +166,9 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ---
 
-### EGL Config Prevention
+### EGL Config Prevention & Error Recovery
 * **Rule**: Explicitly set the window pixel format to `PixelFormat.RGBA_8888` in `MainActivity.onCreate` to prevent the OS from attempting to negotiate 10-bit wide-gamut formats (`101010-2`) that are unsupported or flaky on SwiftShader CPU-based graphics drivers. This is safe and does not reduce intended test coverage, as standard Android devices default to sRGB (`RGBA_8888`) and dedicated Display P3/wide gamut rendering coverage is verified by the `wide_gamut_test` suite instead.
+* **AVD Error Recovery**: Process- or Activity-level restarts are insufficient when an emulator enters a broken EGL initialization state; recovering graphics rendering requires restarting or re-creating the underlying AVD process.
 
 ---
 
@@ -217,6 +229,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **Safe Force Pushing**: Never recommend using `git push -f` or `git push --force`. Instead, always recommend using `git push --force-with-lease` to prevent overwriting other developers' remote changes.
 * **PR Comment Simplification**: When writing PR comments with build performance tables, keep tables intact but keep surrounding explanations extremely simple, direct, and free of subheadings or bulleted notes, integrating any VM variance disclaimers naturally within the prose.
 * **Triage Uncommitted Check**: When resolving comments, always verify code changes are committed and pushed before proposing to post responses or resolve threads on GitHub, to keep the remote branch in sync with review comments.
+* **Scoped Test Hardware Feature Guarding**: Ensure hardware/platform capability skip guards (e.g. `!DoesSupportWideGamutTests()`) are scoped strictly to tests requesting that specific feature (`switches.enable_wide_gamut`) rather than unconditionally skipping entire test backends across non-matching host architectures (such as `Mac_x64`).
 
  
 
