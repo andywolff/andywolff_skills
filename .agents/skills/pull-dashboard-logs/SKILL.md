@@ -1,6 +1,8 @@
 ---
 name: pull-dashboard-logs
-description: Pull failing presubmit and dashboard check logs for a PR or commit to local files using bb and analyze failures efficiently.
+description: >-
+  Use this skill when the user asks to inspect, pull, or diagnose failing
+  presubmit checks or dashboard logs for a Flutter PR or commit.
 ---
 
 # Pull Dashboard Logs

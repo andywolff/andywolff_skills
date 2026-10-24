@@ -47,7 +47,7 @@ python3 flutter/tools/gn --unoptimized --mac-cpu=arm64 --use-glfw-swiftshader
 
 > [!NOTE]
 > **Build Directories and Working Directory Context:**
-> Build artifacts and output files reside under `engine/src/out/` when running commands from the repository root (e.g. `/Users/awolff/Projects/andywolff/flutter`).
+> Build artifacts and output files reside under `engine/src/out/` when running commands from the repository root (e.g. `flutter` package root).
 > * Root directory references: `engine/src/out/host_debug_unopt_arm64/...`
 > * Engine directory references (if commands run in `engine/src`): `out/host_debug_unopt_arm64/...`
 
@@ -78,12 +78,12 @@ When executing C++ engine unittests on macOS against OpenGL ES and Vulkan:
 
 ```bash
 # Run all C++ unittests across Metal, OpenGLES, and Vulkan backends:
-# (Configure Vulkan SDK environment variables inline or via ~/.zshenv)
-VULKAN_SDK=~/Library/VulkanSDK/1.4.341.1/macOS \
-DYLD_LIBRARY_PATH=~/Library/VulkanSDK/1.4.341.1/macOS/lib:./out/host_debug_unopt_arm64 \
-VK_ADD_LAYER_PATH=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/explicit_layer.d \
-VK_ICD_FILENAMES=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/icd.d/MoltenVK_icd.json \
-VK_DRIVER_FILES=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/icd.d/MoltenVK_icd.json \
+# (Dynamically resolve installed Vulkan SDK or export VULKAN_SDK in ~/.zshenv)
+VULKAN_SDK="${VULKAN_SDK:-$(ls -d ~/Library/VulkanSDK/*/macOS 2>/dev/null | sort -V | tail -n 1)}" \
+DYLD_LIBRARY_PATH="${VULKAN_SDK}/lib:./out/host_debug_unopt_arm64" \
+VK_ADD_LAYER_PATH="${VULKAN_SDK}/share/vulkan/explicit_layer.d" \
+VK_ICD_FILENAMES="${VULKAN_SDK}/share/vulkan/icd.d/MoltenVK_icd.json" \
+VK_DRIVER_FILES="${VULKAN_SDK}/share/vulkan/icd.d/MoltenVK_icd.json" \
 ./out/host_debug_unopt_arm64/impeller_unittests
 
 # (Optional) Restrict to Metal only to bypass GL/Vulkan translation errors:

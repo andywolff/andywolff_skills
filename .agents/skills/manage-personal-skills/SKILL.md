@@ -41,7 +41,7 @@ To symlink (or re-symlink) all existing skills into a target repository worktree
 .agents/skills/personal-manage-personal-skills/scripts/symlink_all.sh [target_repo_path]
 ```
 
-* `[target_repo_path]` is optional and defaults to `/Users/awolff/Projects/andywolff/flutter`.
+* `[target_repo_path]` is optional and defaults to the sibling `flutter` checkout (e.g. `../flutter`).
 
 ---
 

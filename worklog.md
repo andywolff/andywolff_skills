@@ -150,7 +150,7 @@ PR descriptions or code comments instead.
 ## Android Testing & Verification
 
 ### Local Engine Gradle Resolution & Validation
-Detailed instructions for running Android instrumented tests with a local engine build have been promoted to the personal skill: [run-android-instrumented-tests-local-engine](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/run-android-instrumented-tests-local-engine).
+Detailed instructions for running Android instrumented tests with a local engine build have been promoted to the personal skill: [run-android-instrumented-tests-local-engine](.agents/skills/run-android-instrumented-tests-local-engine/SKILL.md).
 
 ---
 
@@ -186,7 +186,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 ### Testing Platform Views: Native Draw Synchronization
 * **Best Practice**: When writing platform view integration/smoke tests, avoid using a simple frame-delay loop (`WidgetsBinding.instance.endOfFrame`) before screenshots as they are highly susceptible to race conditions (blank/black overlays). Instead, await a native draw event dispatched from the native view itself (e.g., by subclassing the native view and overriding `onDraw(Canvas)`).
 * **Reference**: See the synchronized text view implementation in `android_hardware_smoke_test` (introduced in PR #189151).
-* **Timeout Rule**: Never add localized/arbitrary timeouts (e.g., `future.timeout()`) to asynchronous test futures; let the global test/JUnit runner timeouts handle hangs (see [Style-guide-for-Flutter-repo.md](file:///Users/awolff/Projects/andywolff/flutter-sync_composition/docs/contributing/Style-guide-for-Flutter-repo.md#L876-L886)).
+* **Timeout Rule**: Never add localized/arbitrary timeouts (e.g., `future.timeout()`) to asynchronous test futures; let the global test/JUnit runner timeouts handle hangs (see [Style-guide-for-Flutter-repo.md](https://github.com/flutter/flutter/blob/master/docs/contributing/Style-guide-for-Flutter-repo.md)).
 
 ---
 
@@ -200,7 +200,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 
 ### Git Worktree Management
 * **Preference**: Use Git worktrees when switching branches to prevent concurrent access conflicts.
-* **Guidelines**: Refer to [git-worktree-management](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/git-worktree-management) for procedures on symlinking skills, checking merge status, and safely removing worktrees.
+* **Guidelines**: Refer to [git-worktree-management](.agents/skills/git-worktree-management/SKILL.md) for procedures on symlinking skills, checking merge status, and safely removing worktrees.
 
 ### Bootstrapping gclient in a Worktree
 * **Rule**: When using Git worktrees for engine/framework development, copy the `.gclient` configuration file from the master or sibling checkout to the root of the new worktree to ensure `gclient sync` can locate the solution root.
@@ -237,7 +237,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 ---
 
 ### Querying LUCI Build History & Offline Validation
-* **Build History Queries**: See [query-luci-build-history](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/query-luci-build-history) for builder stability and step duration checks.
+* **Build History Queries**: See [query-luci-build-history](.agents/skills/query-luci-build-history/SKILL.md) for builder stability and step duration checks.
 * **Offline `.ci.yaml` Validation**: Run validation tests offline to bypass restricted CI network sandboxing:
   ```sh
   dart pub get --offline
@@ -414,6 +414,10 @@ Detailed instructions for running Android instrumented tests with a local engine
   `engine/` within the same PR triggers `override_on_non_overriding_member`
   and `undefined_method` errors in the merge queue.
 
+---
 
-
+### Skill Authoring & Repository Portability
+* **Portability & Environment Overrides**: Never commit hardcoded absolute user home paths (e.g. `/Users/<user>`) in skills, scripts, or configuration files (`skills_sources.txt`). Resolve paths dynamically relative to the executing script or via environment variables (`FLUTTER_ENGINE_OUT`, `FLUTTER_ROOT`, `SKILLS_CENTRAL_DIR`), falling back to sibling directory searches.
+* **Third-Person Intent Triggers**: Align skill `description` frontmatter to clear third-person action triggers (e.g. "Use this skill when the user asks to...") to ensure LLMs correctly match user intent during tool selection.
+* **Command Scripting Limits**: For automation or shell operations exceeding three lines, write them to a dedicated script file rather than executing inline command strings to ensure clean execution and maintain auto-approvability.
 

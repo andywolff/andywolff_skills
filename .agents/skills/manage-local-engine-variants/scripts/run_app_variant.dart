@@ -97,11 +97,31 @@ String? _resolveEngineVariant(Directory outDir, String variant) {
 }
 
 Directory? _findOutDirectory() {
+  final envOut = Platform.environment['FLUTTER_ENGINE_OUT'] ?? Platform.environment['ENGINE_OUT'];
+  if (envOut != null && envOut.isNotEmpty) {
+    final dir = Directory(envOut);
+    if (dir.existsSync()) {
+      return dir;
+    }
+  }
+
+  final flutterRoot = Platform.environment['FLUTTER_ROOT'];
+  if (flutterRoot != null && flutterRoot.isNotEmpty) {
+    final candidate = Directory('$flutterRoot/engine/src/out');
+    if (candidate.existsSync()) {
+      return candidate;
+    }
+  }
+
   var current = Directory.current;
   for (var i = 0; i < 5; i++) {
     final candidate = Directory('${current.path}/engine/src/out');
     if (candidate.existsSync()) {
       return candidate;
+    }
+    final directOut = Directory('${current.path}/out');
+    if (directOut.existsSync() && current.path.endsWith('engine/src')) {
+      return directOut;
     }
     final parent = current.parent;
     if (parent.path == current.path) break;
@@ -118,18 +138,6 @@ Directory? _findOutDirectory() {
     final parent = scriptDir.parent;
     if (parent.path == scriptDir.path) break;
     scriptDir = parent;
-  }
-
-  const hardcodedPaths = [
-    '/Users/awolff/Projects/andywolff/flutter-repaintboundary_leak/engine/src/out',
-    '/Users/awolff/Projects/andywolff/flutter-corners/engine/src/out',
-    '/Users/awolff/Projects/andywolff/flutter/engine/src/out',
-  ];
-  for (final path in hardcodedPaths) {
-    final dir = Directory(path);
-    if (dir.existsSync()) {
-      return dir;
-    }
   }
 
   return null;

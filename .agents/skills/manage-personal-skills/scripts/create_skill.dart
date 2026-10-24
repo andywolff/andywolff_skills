@@ -48,9 +48,15 @@ void main(List<String> args) async {
     exit(1);
   }
 
+  final String scriptPath = Platform.script.toFilePath();
+  final Directory scriptDir = File(scriptPath).parent;
+  final String defaultCentralRepoPath = scriptDir.parent.parent.path;
+  final String defaultParentRepoPath = scriptDir.parent.parent.parent.parent.path;
+
   final String centralRepoPath =
-      '/Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills';
-  final String parentRepoPath = '/Users/awolff/Projects/andywolff';
+      Platform.environment['SKILLS_CENTRAL_DIR'] ?? defaultCentralRepoPath;
+  final String parentRepoPath =
+      Platform.environment['PARENT_REPO_DIR'] ?? defaultParentRepoPath;
 
   final Directory centralSkillsDir = Directory(centralRepoPath);
 

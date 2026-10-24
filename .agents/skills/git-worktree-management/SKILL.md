@@ -127,7 +127,7 @@ To resolve this, run the symlinking script from the
 ```sh
 .agents/skills/personal-manage-personal-skills/scripts/symlink_all.sh <worktree-path>
 ```
-For more details, see the [manage-personal-skills](file:///Users/awolff/Projects/andywolff/andywolff_skills/.agents/skills/manage-personal-skills) skill.
+For more details, see the [manage-personal-skills](../manage-personal-skills/SKILL.md) skill.
 
 ## 5. Bootstrapping gclient in a Worktree
 

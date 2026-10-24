@@ -3,8 +3,12 @@
 # Exit on error
 set -e
 
-SKILLS_REPO_ROOT="/Users/awolff/Projects/andywolff/andywolff_skills"
-PARENT_DIR="/Users/awolff/Projects/andywolff"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_SKILLS_REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd -P)"
+DEFAULT_PARENT_DIR="$(cd "$DEFAULT_SKILLS_REPO_ROOT/.." && pwd -P)"
+
+SKILLS_REPO_ROOT="${SKILLS_REPO_ROOT:-$DEFAULT_SKILLS_REPO_ROOT}"
+PARENT_DIR="${PARENT_DIR:-$DEFAULT_PARENT_DIR}"
 
 # Parse optional parameter or auto-detect all worktrees
 TARGET_REPOS=()
@@ -25,6 +29,12 @@ if [ -f "$SKILLS_REPO_ROOT/skills_sources.txt" ]; then
     # Skip empty lines and comments
     if [[ -n "$line" && ! "$line" =~ ^# ]]; then
       trimmed=$(echo "$line" | xargs)
+      # Resolve relative paths against SKILLS_REPO_ROOT, expand tilde if present
+      if [[ "$trimmed" =~ ^~ ]]; then
+        trimmed="${trimmed/#\~/$HOME}"
+      elif [[ "$trimmed" != /* ]]; then
+        trimmed="$SKILLS_REPO_ROOT/$trimmed"
+      fi
       if [ -d "$trimmed" ]; then
         SOURCES+=("$trimmed")
       else
