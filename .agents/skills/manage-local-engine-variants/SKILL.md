@@ -1,8 +1,8 @@
 ---
 name: manage-local-engine-variants
 description: >-
-  Build, snapshot, organize, and execute Flutter apps across multiple local engine
-  build variants without slow recompilation cycles.
+  Use this skill when the user wants to build, snapshot, organize, and execute
+  Flutter apps across multiple local engine build variants without slow recompilation cycles.
 ---
 
 # Local Engine Variants Management Guide

@@ -15,11 +15,24 @@ This skill ensures all custom developer-defined skills are placed in the
 central skills repository (`andywolff_skills`) and correctly symlinked into
 target repository worktrees (like `flutter`) with a `personal-` prefix.
 
+> [!NOTE]
+> **Path Architecture: Central Repository vs Target Worktrees:**
+> * **In Central Skills Repository (`andywolff_skills`)**:
+>   Skills reside directly in `.agents/skills/<skill-name>/` (without the `personal-` prefix).
+> * **In Target Repositories / Worktrees (e.g. `flutter`, `flutter-engine`)**:
+>   Skills are symlinked with a `personal-` prefix (e.g. `.agents/skills/personal-<skill-name>/`) to avoid naming collisions with upstream repository skills.
+
 ## 1. Creating a New Skill
 
 To define and scaffold a new custom skill:
 
 ```sh
+# From central repository:
+dart .agents/skills/manage-personal-skills/scripts/create_skill.dart \
+  --name "my-new-skill" \
+  --description "A brief human-readable description of what this skill does."
+
+# Or from target worktree:
 dart .agents/skills/personal-manage-personal-skills/scripts/create_skill.dart \
   --name "my-new-skill" \
   --description "A brief human-readable description of what this skill does."
@@ -38,6 +51,10 @@ When checking out a new Git worktree, local untracked symlinks in `.agents/skill
 To symlink (or re-symlink) all existing skills into a target repository worktree, run:
 
 ```sh
+# From central repository:
+.agents/skills/manage-personal-skills/scripts/symlink_all.sh [target_repo_path]
+
+# Or from target worktree:
 .agents/skills/personal-manage-personal-skills/scripts/symlink_all.sh [target_repo_path]
 ```
 

@@ -1,9 +1,9 @@
 ---
 name: measure-process-footprint
 description: >-
-  Capture, sample, and compare live native and VM memory footprints
-  (phys_footprint, dirty memory, VM regions) for Flutter applications and
-  processes across macOS, iOS Simulator, and Android.
+  Use this skill when the user wants to capture, sample, and compare live
+  native and VM memory footprints (phys_footprint, dirty memory, VM regions)
+  for Flutter applications and processes across macOS, iOS Simulator, and Android.
 ---
 
 # Measure Process Footprint
