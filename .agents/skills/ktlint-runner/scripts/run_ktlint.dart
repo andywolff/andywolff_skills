@@ -8,10 +8,50 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 Future<void> main(List<String> args) async {
-  // 1. Resolve the repository root by walking up from this script's location:
-  // run_ktlint.dart -> scripts -> ktlint-runner -> skills -> .agents -> repo_root
-  final scriptFile = File(Platform.script.toFilePath());
-  final Directory repoRoot = scriptFile.parent.parent.parent.parent.parent;
+  // 1. Resolve the repository root:
+  // Check Directory.current and ancestors, FLUTTER_ROOT, or script location.
+  Directory? findFlutterRepoRoot() {
+    final flutterRootEnv = Platform.environment['FLUTTER_ROOT'];
+    if (flutterRootEnv != null && flutterRootEnv.isNotEmpty) {
+      final dir = Directory(flutterRootEnv);
+      if (File(path.join(dir.path, '.ci.yaml')).existsSync()) {
+        return dir;
+      }
+    }
+
+    var current = Directory.current;
+    for (var i = 0; i < 6; i++) {
+      if (File(path.join(current.path, '.ci.yaml')).existsSync()) {
+        return current;
+      }
+      final parent = current.parent;
+      if (parent.path == current.path) break;
+      current = parent;
+    }
+
+    final scriptFile = File(Platform.script.toFilePath());
+    var candidate = scriptFile.parent;
+    for (var i = 0; i < 6; i++) {
+      if (File(path.join(candidate.path, '.ci.yaml')).existsSync()) {
+        return candidate;
+      }
+      final parent = candidate.parent;
+      if (parent.path == candidate.path) break;
+      candidate = parent;
+    }
+
+    return null;
+  }
+
+  final Directory? resolvedRepoRoot = findFlutterRepoRoot();
+  if (resolvedRepoRoot == null) {
+    print(
+      '❌ Error: Could not locate Flutter repository root containing .ci.yaml.\n'
+      '   Ensure you are running from within a Flutter checkout or set FLUTTER_ROOT.',
+    );
+    exit(1);
+  }
+  final Directory repoRoot = resolvedRepoRoot;
 
   // 2. Read .ci.yaml to dynamically discover the exact ktlint version tag:
   final ciYamlFile = File(path.join(repoRoot.path, '.ci.yaml'));
