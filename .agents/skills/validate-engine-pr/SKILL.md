@@ -27,6 +27,12 @@ et fetch
 # (Classic GN fallback: gclient sync -D)
 ```
 
+> [!CAUTION]
+> **Authentication Errors (`gcert` / CIPD):**
+> If `et fetch` or `gclient sync` fails with an authentication error (e.g., requesting `gcert`, SSO, or Google internal credentials), **STOP IMMEDIATELY**.
+> * Prompt the user to authenticate (`gcert`).
+> * **NEVER** switch to another branch, worktree, or pre-existing build to bypass missing authentication.
+
 > [!IMPORTANT]
 > If shader compilation fails on macOS with `cannot execute tool 'metal' due to missing Metal Toolchain`, proactively run `xcodebuild -downloadComponent MetalToolchain` to install the required command-line Metal compiler.
 
