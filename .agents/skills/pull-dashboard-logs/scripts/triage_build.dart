@@ -50,11 +50,33 @@ int runCommandToFile(List<String> cmd, String outputFile) {
   return result.exitCode;
 }
 
-String getHeadSha(String prNumber) {
+String _detectRepo() {
+  try {
+    final result = Process.runSync('gh', <String>[
+      'repo',
+      'view',
+      '--json',
+      'nameWithOwner',
+      '--jq',
+      '.nameWithOwner',
+    ]);
+    if (result.exitCode == 0) {
+      final name = (result.stdout as String).trim();
+      if (name.isNotEmpty && name.contains('/')) {
+        return name;
+      }
+    }
+  } catch (_) {}
+  return 'flutter/flutter';
+}
+
+String getHeadSha(String prNumber, String repo) {
   final result = Process.runSync('gh', <String>[
     'pr',
     'view',
     prNumber,
+    '-R',
+    repo,
     '--json',
     'headRefOid',
     '--jq',
@@ -63,10 +85,10 @@ String getHeadSha(String prNumber) {
   return (result.stdout as String).trim();
 }
 
-List<String> getFailingPresubmitBuilders(String sha) {
+List<String> getFailingPresubmitBuilders(String sha, String repo) {
   final result = Process.runSync('gh', <String>[
     'api',
-    'repos/flutter/flutter/commits/$sha/check-runs',
+    'repos/$repo/commits/$sha/check-runs',
     '--jq',
     '.check_runs[] | select(.name == "Dashboard Checks") | .output.text',
   ]);
@@ -206,19 +228,22 @@ void main(List<String> args) {
   var sha = getOption(args, '--sha');
   final build = getOption(args, '--build');
   final builder = getOption(args, '--builder');
+  final repo = getOption(args, '--repo') ?? _detectRepo();
   final outputDir = getOption(args, '--output-dir') ?? '/tmp/dashboard_logs';
 
   Directory(outputDir).createSync(recursive: true);
 
   if (build == null && sha == null && pr == null) {
     stderr.writeln(
-      'Error: No target specified. Please provide --pr <number>, --sha <commit_hash>, or --build <build_id>.',
+      'Error: No target specified. Please provide --pr <number>, --sha <commit_hash>, or --build <build_id>.\n'
+      'Optional flags: [--builder <name>] [--repo <owner/repo>] [--output-dir <path>]',
     );
     exit(1);
   }
 
   if (sha == null && pr != null) {
-    sha = getHeadSha(pr);
+    print('[*] Querying PR $pr on repository $repo...');
+    sha = getHeadSha(pr, repo);
     print('[*] PR $pr Head SHA: $sha');
   }
 
@@ -233,7 +258,7 @@ void main(List<String> args) {
   } else if (sha != null) {
     final buildersToCheck = builder != null
         ? <String>[builder]
-        : getFailingPresubmitBuilders(sha);
+        : getFailingPresubmitBuilders(sha, repo);
     final buildsFile = listBuildsForSha(sha, outputDir);
     print('[*] Stored all build metadata in: file://$buildsFile');
 
@@ -265,7 +290,7 @@ void main(List<String> args) {
     }
   } else {
     print(
-      'Usage: dart triage_build.dart [--pr <num> | --sha <hash> | --build <id>] [--builder <name>] [--output-dir <path>]',
+      'Usage: dart triage_build.dart [--pr <num> | --sha <hash> | --build <id>] [--builder <name>] [--repo <owner/repo>] [--output-dir <path>]',
     );
     exit(1);
   }

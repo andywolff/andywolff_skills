@@ -22,23 +22,30 @@ The skill includes a dedicated Dart triage script that resolves the PR commit SH
 
 1. **Triage a Pull Request** (primary entrypoint):
    ```bash
-   dart .agents/skills/personal-pull-dashboard-logs/scripts/triage_build.dart --pr <PR_NUMBER>
+   dart .agents/skills/pull-dashboard-logs/scripts/triage_build.dart --pr <PR_NUMBER>
    ```
 
 2. **Filter by Specific Builder on a PR**:
    ```bash
-   dart .agents/skills/personal-pull-dashboard-logs/scripts/triage_build.dart --pr <PR_NUMBER> --builder "Mac mac_unopt"
+   dart .agents/skills/pull-dashboard-logs/scripts/triage_build.dart --pr <PR_NUMBER> --builder "Mac mac_unopt"
    ```
 
-3. **Triage a Specific Commit SHA**:
+3. **Triage on Alternate Repository (e.g. `flutter/engine` or `flutter/packages`)**:
    ```bash
-   dart .agents/skills/personal-pull-dashboard-logs/scripts/triage_build.dart --sha <COMMIT_SHA>
+   dart .agents/skills/pull-dashboard-logs/scripts/triage_build.dart --pr <PR_NUMBER> --repo flutter/engine
    ```
 
-4. **Triage a Specific Build ID**:
+4. **Triage a Specific Commit SHA**:
    ```bash
-   dart .agents/skills/personal-pull-dashboard-logs/scripts/triage_build.dart --build <BUILD_ID>
+   dart .agents/skills/pull-dashboard-logs/scripts/triage_build.dart --sha <COMMIT_SHA>
    ```
+
+5. **Triage a Specific Build ID**:
+   ```bash
+   dart .agents/skills/pull-dashboard-logs/scripts/triage_build.dart --build <BUILD_ID>
+   ```
+
+*(Note: In target repositories symlinked via `manage-personal-skills`, the directory path is `.agents/skills/personal-pull-dashboard-logs/...`)*
 
 All logs and step traces are saved locally to `/tmp/dashboard_logs/` (or `--output-dir <path>`).
 
