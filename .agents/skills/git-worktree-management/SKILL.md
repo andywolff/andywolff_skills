@@ -140,3 +140,8 @@ to ensure `gclient` can locate the solution root.
 - If no `.gclient` file is available, refer to the official
   [Setting up the Engine development environment](https://github.com/flutter/flutter/wiki/Setting-up-the-Engine-development-environment#getting-the-source)
   guide on the Flutter Wiki for how to configure and bootstrap `gclient`.
+
+> [!NOTE]
+> **gclient sync Execution Time:**
+> Running `gclient sync -D` on a new worktree typically takes between 2 to 5 minutes to download all third-party dependencies (such as Dart SDK, Skia, swiftshader, and Vulkan tools) from scratch, as they are not shared directly by git worktree checkout.
+
