@@ -72,14 +72,22 @@ ninja -C out/host_debug_unopt_arm64 flutter/testing/dart flutter/lib/ui/fixtures
 ---
 
 ## Step 5: Hermetic C++ Unittest Execution (Impeller)
-When executing C++ engine unittests on macOS against OpenGL ES, you **must** inject `DYLD_LIBRARY_PATH` so `dlopen` can locate the compiled ANGLE translation dynamic libraries (`libGLESv2.dylib`).
+When executing C++ engine unittests on macOS against OpenGL ES and Vulkan:
+1. You **must** inject `DYLD_LIBRARY_PATH` so `dlopen` can locate the compiled ANGLE translation dynamic libraries (`libGLESv2.dylib`).
+2. If Vulkan SDK is installed (typically in `~/Library/VulkanSDK/<version>/macOS`), configure the Vulkan environment variables (`VULKAN_SDK`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `VK_ADD_LAYER_PATH`, and include `VULKAN_SDK/lib` in `DYLD_LIBRARY_PATH`).
 
 ```bash
-# Run all C++ unittests across Metal and OpenGLES backends:
-DYLD_LIBRARY_PATH=./out/host_debug_unopt_arm64 ./out/host_debug_unopt_arm64/impeller_dart_unittests
+# Run all C++ unittests across Metal, OpenGLES, and Vulkan backends:
+# (Configure Vulkan SDK environment variables inline or via ~/.zshenv)
+VULKAN_SDK=~/Library/VulkanSDK/1.4.341.1/macOS \
+DYLD_LIBRARY_PATH=~/Library/VulkanSDK/1.4.341.1/macOS/lib:./out/host_debug_unopt_arm64 \
+VK_ADD_LAYER_PATH=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/explicit_layer.d \
+VK_ICD_FILENAMES=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/icd.d/MoltenVK_icd.json \
+VK_DRIVER_FILES=~/Library/VulkanSDK/1.4.341.1/macOS/share/vulkan/icd.d/MoltenVK_icd.json \
+./out/host_debug_unopt_arm64/impeller_unittests
 
-# (Optional) Restrict to Metal only to bypass GL translation errors:
-./out/host_debug_unopt_arm64/impeller_dart_unittests --gtest_filter="*Metal*"
+# (Optional) Restrict to Metal only to bypass GL/Vulkan translation errors:
+./out/host_debug_unopt_arm64/impeller_unittests --gtest_filter="*Metal*"
 ```
 
 ---
