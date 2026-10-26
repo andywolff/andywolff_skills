@@ -51,7 +51,7 @@ PR descriptions or code comments instead.
 - [ ] **Offscreen Render Target Cache Pixel Format Matching**: Include the target pixel format in render target cache descriptors to avoid reusing wide-gamut textures for standard sRGB allocations or vice versa.
 - [ ] **Multi-line Automation Scripts**: Write multi-line automation scripts or test loops to the dedicated scratch directory rather than executing large inline shell blocks.
 - [ ] **Pre-push Hook Merge-Base Scope**: Keep local `origin/master` updated or use `--no-verify` when pushing to prevent Flutter engine's `pre-push` hook from formatting stale intervening upstream commits.
-- [ ] **Handling Authentication Errors**: Never skirt around authentication errors (such as disabling RBE or suppressing updates) - ask the user to log in or refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
+- [ ] **Handling Authentication Errors**: Stop immediately and notify user on auth failures - never switch to sibling worktrees or disable configurations to work around credentials.
 - [ ] **In-Source Comments vs Commit Context**: Document current behavior and contracts in code comments; keep historical diff narratives and bug descriptions in commit messages and PR descriptions.
 - [ ] **Redundant Wrapper Elimination**: Delete obsolete or single-call custom wrappers when refactoring simplifies them into standard library calls.
 - [ ] **Jetski CLI Settings**: Configure Jetski CLI settings and command approvals in `~/.gemini/jetski/cli/settings.json`.
@@ -61,6 +61,7 @@ PR descriptions or code comments instead.
 - [ ] **In-Flight gclient Staging Directories**: Never delete `_gclient_*` directories without verifying running sync processes with `pgrep -fl "gclient|git-remote"`. These directories represent active repository clones in progress, not corrupted debris.
 - [ ] **Wide-Gamut Golden Screenshot Quantization**: Skia Gold ingests 8-bit PNGs, so Impeller 10-bit wide-gamut surfaces (`kB10G10R10A10XR`) are quantized and clamped to 8-bit DeviceRGB by `MetalGoldenScreenshotter`. Test lossless out-of-gamut float coordinates directly with `rawExtendedRgba128` instead.
 - [ ] **Verbatim Reland Isolation**: When relanding a reverted pull request, keep the reland PR verbatim to the original landing. Split subsequent reviewer feedback or speculative adjustments into dedicated follow-up PRs to prevent conflating reland regressions with new changes.
+- [ ] **Active Agent Worktree Protection**: Check presence locks (`~/.gemini/jetski/presence/*.lock`) against `conversation_summaries.db` before cleaning up worktrees to avoid removing workspaces with active sessions or orchestrators.
 
 ---
 
@@ -202,6 +203,10 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **Preference**: Use Git worktrees when switching branches to prevent concurrent access conflicts.
 * **Guidelines**: Refer to [git-worktree-management](.agents/skills/git-worktree-management/SKILL.md) for procedures on symlinking skills, checking merge status, and safely removing worktrees.
 
+### Active Jetski Session Worktree Protection
+* **Rule**: Before cleaning up or pruning worktrees, verify whether any active Jetski conversations or orchestrators are attached by checking open file locks in `~/.gemini/jetski/presence/*.lock` against `conversation_summaries.db`.
+* **Rationale**: Orchestrator sessions and long-running agent tasks may reside in worktrees whose feature branches appear merged upstream or whose PRs were closed, risking accidental workspace deletion.
+
 ### Bootstrapping gclient in a Worktree
 * **Rule**: When using Git worktrees for engine/framework development, copy the `.gclient` configuration file from the master or sibling checkout to the root of the new worktree to ensure `gclient sync` can locate the solution root.
 
@@ -288,7 +293,7 @@ Detailed instructions for running Android instrumented tests with a local engine
 * **File Creation Tooling**: Always use dedicated file creation tools (`write_to_file`) rather than shell redirection or `cat` heredocs when creating or overwriting files in the workspace.
 * **No Scripted VCS Push**: Do not run `git commit` or `git push` via auxiliary Dart or shell scripts. Use direct commands or interactive resolution menus.
 * **Multi-line Automation Scripts to Scratch**: Always write multi-line scripts or automated test execution loops to dedicated scratch files before executing them, rather than executing large inline command-line blocks directly.
-* **Handling Authentication Errors**: Never skirt around authentication problems or disable tooling configurations (such as disabling RBE or bypassing depot_tools auto-updates) when encountering credential errors. Ask the user to refresh credentials (e.g. `gcert`, `cipd auth-login`) first.
+* **Handling Authentication Errors**: At the very first sign of an authentication failure (e.g. `gcert`, `glogin`, SSO cookie expiration), stop immediately and notify the user. Never skirt around authentication problems, disable tooling configurations, or switch to sibling worktrees/alternate checkouts to work around missing credentials. Ask the user to refresh credentials first.
 * **Verbatim Reland Isolation**: When relanding a reverted pull request, keep the reland PR verbatim to the original landing. Split subsequent reviewer feedback or speculative adjustments into dedicated follow-up PRs to prevent conflating reland regressions with new changes.
 
  
