@@ -57,28 +57,30 @@ led get-builder 'luci.flutter.staging:<EXISTING_BUILDER_NAME>' \
   | led launch
 ```
 
-### Step 2: Running an Engine PR Staging Test
-For Engine PRs (changes under the `flutter/engine` repository):
+### Step 2: Running Staging Tests for PRs Modifying Engine Code
+When a PR modifies files under `engine/`, `bin/internal/update_engine_version.sh` computes a content-aware hash representing the unreleased engine code. Standalone staging framework shards will fail at `flutter config` with a 404 from Google Cloud Storage unless directed to the prebuilt engine artifacts published by presubmit builders.
 
-1. **Verify artifacts are built**: Ensure the PR has completed its compilation checks and built the engine artifacts:
+1. **Verify or Wait for Engine Artifacts**:
+   Locate and monitor the host engine builders (such as `Mac mac_host_engine` or `Linux linux_host_engine`), which build and archive the engine binaries to `flutter_archives_v2`. Avoid tracking test-runner builders like `mac_unopt`, which execute unit tests after compilation:
    ```bash
-   gh pr checks <ENGINE_PR_NUMBER> --repo flutter/engine
-   ```
-2. **Retrieve the Engine Commit Hash**: Get the target commit hash of the engine PR:
-   ```bash
-   gh pr view <ENGINE_PR_NUMBER> --repo flutter/engine --json headRefOid -q .headRefOid
-   ```
-3. **Launch the staging test**: Run `led get-builder` targeting the prebuilt engine version.
-   * *If there is no accompanying framework PR*, set the framework `git_ref` to the main branch (`refs/heads/main` or `refs/heads/master` depending on the active main branch):
+   # Find engine builders for the commit
+   bb ls -t "buildset:sha/git/<COMMIT_SHA>"
 
-```bash
-led get-builder 'luci.flutter.staging:<PRESUBMIT_TEST_NAME>' \
-  | led edit -pa git_ref='refs/heads/main' \
-  | led edit -pa git_url='https://github.com/flutter/flutter' \
-  | led edit -pa flutter_prebuilt_engine_version='<COMMIT_HASH>' \
-  | led edit -pa flutter_realm='flutter_archives_v2' \
-  | led launch
-```
+   # Wait for the host engine builder to complete
+   bb collect <HOST_ENGINE_BUILD_ID>
+   ```
+
+2. **Launch Staging Shards with Prebuilt Engine and Explicit Shard**:
+   Once the host engine builder completes, pass `flutter_prebuilt_engine_version`, `flutter_realm`, and the explicit `shard` (e.g., `shard='framework_tests'`) to prevent the drone recipe from defaulting to `build_tests`:
+   ```bash
+   led get-builder 'luci.flutter.staging:<BUILDER_NAME>' \
+     | led edit -pa git_ref='refs/pull/<PR_NUMBER>/head' \
+     | led edit -pa git_url='https://github.com/flutter/flutter' \
+     | led edit -pa shard='<SHARD_NAME>' \
+     | led edit -pa flutter_prebuilt_engine_version='<COMMIT_SHA>' \
+     | led edit -pa flutter_realm='flutter_archives_v2' \
+     | led launch
+   ```
 
 ### Step 3: Output & Task Monitoring
 When `led launch` succeeds, it outputs JSON metadata containing a Swarming/Buildbucket task URL and build ID.
