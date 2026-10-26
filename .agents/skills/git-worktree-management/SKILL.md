@@ -14,8 +14,9 @@ including symlinking agent skills and bootstrapping gclient.
 
 You can execute the built-in Dart script to automatically evaluate all active
 worktrees, including their branch names, merge status (detecting both
-direct and squash/patch merges), dirty/clean files count, and pull request
-status (via the `gh` CLI):
+direct and squash/patch merges), dirty/clean files count, pull request
+status (via the `gh` CLI, including detecting comments indicating intent
+to return or reopen closed PRs), and active Jetski agent sessions:
 
 ```sh
 # From central repository:
@@ -23,6 +24,15 @@ dart .agents/skills/git-worktree-management/scripts/check_worktrees.dart
 
 # Or from target worktree:
 dart .agents/skills/personal-git-worktree-management/scripts/check_worktrees.dart
+```
+
+To list only active Jetski conversations and orchestrators across all workspaces:
+```sh
+# Human-readable table:
+dart .agents/skills/git-worktree-management/scripts/get_active_sessions.dart
+
+# JSON output for scripting:
+dart .agents/skills/git-worktree-management/scripts/get_active_sessions.dart --json
 ```
 
 ## 1. List Active Worktrees
@@ -84,25 +94,38 @@ merged upstream (`upstream/master`):
 
 To clean up a worktree:
 
-1. **Check Status**:
+1. **Check Active Sessions**:
+   Ensure no running Jetski processes or active agent orchestrators are
+   attached:
+   ```sh
+   dart .agents/skills/git-worktree-management/scripts/get_active_sessions.dart
+   ```
+   Do not delete worktrees hosting active sessions or orchestrators.
+
+2. **Check Closed PR Intent**:
+   If a worktree's PR is closed but flagged with `[return later]`, do not
+   remove it without confirming with the user, as the author noted plans
+   to revisit, pause, or reopen the work.
+
+3. **Check Status**:
    Verify there are no uncommitted or modified tracked files in the worktree:
    ```sh
    git -C <worktree-path> status --short
    ```
 
-2. **Remove the Worktree**:
+4. **Remove the Worktree**:
    ```sh
    git worktree remove <worktree-path>
    ```
 
-3. **Prune Deleted Worktrees**:
+5. **Prune Deleted Worktrees**:
    If you manually deleted any worktree directories without using git commands,
    prune their metadata:
    ```sh
    git worktree prune
    ```
 
-4. **Delete the Local Branch**:
+6. **Delete the Local Branch**:
    If the branch is fully merged and no longer needed:
    ```sh
    git branch -D <branch-name>

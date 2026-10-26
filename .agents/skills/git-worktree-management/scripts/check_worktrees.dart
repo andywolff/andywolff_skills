@@ -1,8 +1,50 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'get_active_sessions.dart';
+
+final _returnIntentPattern = RegExp(
+  r'\b(come\s+back|coming\s+back|reopen|revisit|return\s+to|at\s+some\s+point|paused?|on\s+hold|(resume|finish|work\s+on|try|investigate)\s+later|pick\s+(this|it)\s+(back\s+)?up)\b',
+  caseSensitive: false,
+);
+
+class WorktreeReport {
+  final String pathBase;
+  final String branch;
+  final String mergeStatus;
+  final String cleanStatus;
+  final String prStatus;
+  final String activeStatus;
+
+  const WorktreeReport({
+    required this.pathBase,
+    required this.branch,
+    required this.mergeStatus,
+    required this.cleanStatus,
+    required this.prStatus,
+    required this.activeStatus,
+  });
+
+  List<String> toRowValues() => [
+    pathBase,
+    branch,
+    mergeStatus,
+    cleanStatus,
+    prStatus,
+    activeStatus,
+  ];
+}
+
+const _tableColumns = [
+  (title: 'Worktree Path', width: 40),
+  (title: 'Branch', width: 25),
+  (title: 'Merge Status', width: 18),
+  (title: 'Clean Status', width: 12),
+  (title: 'PR Status', width: 32),
+  (title: 'Active Session', width: 25),
+];
+
 Future<void> main() async {
-  // Find repository root
   final repoRootResult = await Process.run('git', ['rev-parse', '--show-toplevel']);
   if (repoRootResult.exitCode != 0) {
     stderr.write('Error: Not in a git repository.\n');
@@ -10,11 +52,11 @@ Future<void> main() async {
   }
   final repoRoot = (repoRootResult.stdout as String).trim();
 
-  // Detect upstream branch
   final upstreamBranch = await detectUpstreamBranch(repoRoot);
   print('Using upstream branch: $upstreamBranch\n');
 
-  // List worktrees
+  final activeSessions = await getActiveJetskiSessions();
+
   final worktreeResult = await Process.run('git', ['worktree', 'list']);
   if (worktreeResult.exitCode != 0) {
     stderr.write('Error listing worktrees: ${worktreeResult.stderr}\n');
@@ -22,37 +64,84 @@ Future<void> main() async {
   }
 
   final lines = (worktreeResult.stdout as String).trim().split('\n');
+  final worktreePaths = lines
+      .map((line) => line.split(RegExp(r'\s+')).firstOrNull)
+      .whereType<String>()
+      .where((path) => path.isNotEmpty && path != repoRoot)
+      .toList();
 
-  // Format header
-  printRow('Worktree Path', 'Branch', 'Merge Status', 'Clean Status', 'PR Status');
-  printRow('-' * 40, '-' * 25, '-' * 18, '-' * 12, '-' * 20);
+  printTable([
+    for (final path in worktreePaths)
+      await evaluateWorktree(path, repoRoot, upstreamBranch, activeSessions),
+  ]);
+}
 
-  for (final line in lines) {
-    final parts = line.split(RegExp(r'\s+'));
-    if (parts.isEmpty) continue;
-    final path = parts[0];
+/// Evaluates git, PR, and active session status for a single worktree directory.
+Future<WorktreeReport> evaluateWorktree(
+  String path,
+  String repoRoot,
+  String upstreamBranch,
+  Map<String, List<SessionInfo>> activeSessions,
+) async {
+  final pathBase = path.split('/').last;
 
-    // Skip main worktree
-    if (path == repoRoot) continue;
-
-    // Handle missing worktree directories on disk
-    if (!Directory(path).existsSync()) {
-      final pathBase = path.split('/').last;
-      printRow(pathBase, '(missing)', 'N/A', 'N/A', 'N/A');
-      continue;
-    }
-
-    final branch = await getBranchName(path);
-    final cleanStatus = await getCleanStatus(path);
-    final prInfo = branch == '(detached)' ? null : await getPRInfo(branch, repoRoot);
-    final mergeStatus = await getMergeStatus(path, branch, upstreamBranch, prInfo: prInfo);
-    final prStatus = prInfo != null
-        ? '${prInfo.state} (#${prInfo.number})'
-        : (branch == '(detached)' ? 'N/A' : 'No PR');
-
-    final pathBase = path.split('/').last;
-    printRow(pathBase, branch, mergeStatus, cleanStatus, prStatus);
+  if (!Directory(path).existsSync()) {
+    return WorktreeReport(
+      pathBase: pathBase,
+      branch: '(missing)',
+      mergeStatus: 'N/A',
+      cleanStatus: 'N/A',
+      prStatus: 'N/A',
+      activeStatus: '-',
+    );
   }
+
+  final branch = await getBranchName(path);
+  final isDetached = branch == '(detached)';
+  final cleanStatus = await getCleanStatus(path);
+  final prInfo = isDetached ? null : await getPRInfo(branch, repoRoot);
+  final mergeStatus = await getMergeStatus(
+    path,
+    branch,
+    upstreamBranch,
+    prInfo: prInfo != null ? (state: prInfo.state, number: prInfo.number) : null,
+  );
+
+  return WorktreeReport(
+    pathBase: pathBase,
+    branch: branch,
+    mergeStatus: mergeStatus,
+    cleanStatus: cleanStatus,
+    prStatus: formatPrStatus(prInfo, isDetached: isDetached),
+    activeStatus: formatActiveStatus(activeSessions[path] ?? const []),
+  );
+}
+
+/// Formats the PR status label, adding a return-intent indicator for closed PRs.
+String formatPrStatus(
+  ({String state, int number, bool returnIntent})? prInfo, {
+  required bool isDetached,
+}) {
+  if (prInfo == null) {
+    return isDetached ? 'N/A' : 'No PR';
+  }
+
+  if (prInfo.state.toUpperCase() == 'CLOSED' && prInfo.returnIntent) {
+    return 'CLOSED (#${prInfo.number}) [return later]';
+  }
+
+  return '${prInfo.state} (#${prInfo.number})';
+}
+
+/// Formats active Jetski sessions into a concise status string.
+String formatActiveStatus(List<SessionInfo> sessions) {
+  if (sessions.isEmpty) {
+    return '-';
+  }
+  if (sessions.length == 1) {
+    return 'Active: ${sessions.first.title}';
+  }
+  return 'Active (${sessions.length} sessions)';
 }
 
 /// Detects the upstream main or master branch name from git references.
@@ -82,7 +171,6 @@ Future<String> getCleanStatus(String path) async {
   final stagedCount = await countGitOutputLines(['diff', '--cached', '--name-only'], path);
   final unstagedCount = await countGitOutputLines(['diff', '--name-only'], path);
 
-  // Count untracked files natively by parsing status output
   final statusResult = await Process.run('git', ['-C', path, 'status', '--short']);
   int untrackedCount = 0;
   for (final line in (statusResult.stdout as String).split('\n')) {
@@ -185,8 +273,11 @@ Future<String> getMergeStatus(
   return 'Unmerged';
 }
 
-/// Fetches the PR status using the GitHub CLI.
-Future<({String state, int number})?> getPRInfo(String branch, String repoRoot) async {
+/// Fetches the PR status and return intent using the GitHub CLI.
+Future<({String state, int number, bool returnIntent})?> getPRInfo(
+  String branch,
+  String repoRoot,
+) async {
   try {
     final result = await Process.run('gh', [
       'pr',
@@ -211,19 +302,62 @@ Future<({String state, int number})?> getPRInfo(String branch, String repoRoot) 
     final first = prs.first as Map<String, dynamic>;
     final state = first['state'] as String;
     final number = first['number'] as int;
-    return (state: state, number: number);
+
+    bool returnIntent = false;
+    if (state.toUpperCase() == 'CLOSED') {
+      returnIntent = await checkClosedPRReturnIntent(number, repoRoot);
+    }
+
+    return (state: state, number: number, returnIntent: returnIntent);
   } catch (_) {
     return null; // gh CLI not installed or failed
   }
 }
 
-/// Prints a formatted row to stdout.
-void printRow(String col1, String col2, String col3, String col4, String col5) {
-  print(
-    '${col1.padRight(40)} | '
-    '${col2.padRight(25)} | '
-    '${col3.padRight(18)} | '
-    '${col4.padRight(12)} | '
-    '${col5.padRight(20)}',
-  );
+/// Checks if a closed PR has an author comment indicating intent to return or reopen.
+Future<bool> checkClosedPRReturnIntent(int prNumber, String repoRoot) async {
+  try {
+    final result = await Process.run('gh', [
+      'pr',
+      'view',
+      '$prNumber',
+      '--json',
+      'comments',
+    ], workingDirectory: repoRoot);
+
+    if (result.exitCode != 0) {
+      return false;
+    }
+
+    final Map<String, dynamic> data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    final List<dynamic> comments = data['comments'] as List<dynamic>? ?? [];
+
+    for (final comment in comments) {
+      final map = comment as Map<String, dynamic>;
+      final viewerDidAuthor = map['viewerDidAuthor'] == true;
+      final body = (map['body'] as String?) ?? '';
+
+      if (viewerDidAuthor && _returnIntentPattern.hasMatch(body)) {
+        return true;
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
+/// Prints a collection of worktree reports in a standardized formatted table.
+void printTable(List<WorktreeReport> reports) {
+  final header = _tableColumns.map((c) => c.title.padRight(c.width)).join(' | ');
+  final divider = _tableColumns.map((c) => '-' * c.width).join(' | ');
+
+  print(header);
+  print(divider);
+
+  for (final report in reports) {
+    final values = report.toRowValues();
+    final row = [
+      for (int i = 0; i < _tableColumns.length; i++) values[i].padRight(_tableColumns[i].width),
+    ].join(' | ');
+    print(row);
+  }
 }
