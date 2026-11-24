@@ -56,22 +56,35 @@ Before starting the build, `engine_build.dart` automatically:
 4. Refuses to evict any `HARD_ACTIVE` worktree (live build PID or heartbeat
    within the last 60 minutes).
 
-## 3. Release Leases Proactively
+## 3. Release Leases Proactively (Own Worktree Only)
+
+> [!CAUTION]
+> **Lease Ownership Invariant:**
+> NEVER run `--release`, `--dehydrate`, `--force`, or destructive cleanup on
+> any worktree that you did not create or lease in the current session, and
+> NEVER offer to release another session's workspace to free disk space. Only
+> the owning session may release its own lease. Always pass `--session-id`
+> when releasing or dehydrating your own worktree; `engine_build.dart` and the
+> `PreToolUse` hook enforce ownership and reject foreign-lease mutations.
 
 As soon as your build/test pass finishes (or a PR is pushed for review), release
-your worktree's lease so it stays cached while space is plentiful but becomes
+your own worktree's lease so it stays cached while space is plentiful but becomes
 immediately evictable if another session needs space:
 
 ```sh
 dart .agents/skills/flutter-engine-build/scripts/engine_build.dart \
-  --release --workspace my-branch --notify-waiters
+  --release --workspace my-branch --session-id <session-id> --notify-waiters
 ```
 
 ## 4. Coordinate When Blocked by Hard-Active Workspaces
 
-If all available space is held by `HARD_ACTIVE` worktrees, `engine_build.dart`
-exits with code `2` and lists the blocking worktrees and their owning session
-IDs. To wait automatically or request handoff via a pluggable notifier command:
+If all available space is held by `HARD_ACTIVE` worktrees owned by other
+sessions, `engine_build.dart` exits with code `2` and lists the blocking
+worktrees and their owning session IDs. Do NOT attempt or offer to release or
+dehydrate those workspaces. Your only valid responses are to wait/request
+handoff via `--wait --request-handoff`, wait for an owning session to finish,
+or report the blocking worktrees and session IDs to the user so they can decide
+which other session to wind down:
 
 ```sh
 dart .agents/skills/flutter-engine-build/scripts/engine_build.dart \
@@ -85,14 +98,14 @@ Cross-session notifications use the optional `AGENT_NOTIFY_CMD` environment
 variable (or `--notify-cmd <cmd>`), invoked as `<cmd> "<target-session-id>" "<message>"`.
 When unset, handoff requests are logged without calling an external binary.
 
-## 5. Manual In-Place Dehydration
+## 5. Manual In-Place Dehydration (Own Worktree Only)
 
-To shrink a specific worktree down to ~470 MB immediately while preserving its
+To shrink your own worktree down to ~470 MB immediately while preserving its
 branch and uncommitted edits:
 
 ```sh
 dart .agents/skills/flutter-engine-build/scripts/engine_build.dart \
-  --dehydrate --workspace my-branch
+  --dehydrate --workspace my-branch --session-id <session-id>
 ```
 
 ## 6. Automatic Session Tracking Hook (Compiled Dart)
@@ -109,9 +122,13 @@ dart compile exe \
 
 Then merge [hooks.json.example](hooks.json.example) into your agent's
 `hooks.json` configuration. The hook runs on `PreInvocation` (surfacing
-dehydration notices without interfering with tool permissions), `PostToolUse`
-(stamping `<gitdir>/agent_session.json`), and `Stop` (flipping `busy` to `idle`
-and optionally notifying queued waiters via `AGENT_NOTIFY_CMD`).
+dehydration notices without interfering with tool permissions), `PreToolUse`
+(blocking `--release`, `--dehydrate`, or destructive cleanup against worktrees
+actively leased by another session, and blocking raw `ninja`/`et build` on
+dehydrated worktrees), `PostToolUse` (stamping `<gitdir>/agent_session.json`
+without stealing foreign active leases or claiming on read-only commands), and
+`Stop` (flipping `busy` to `idle` and optionally notifying queued waiters via
+`AGENT_NOTIFY_CMD`).
 
 ## 7. Verification
 

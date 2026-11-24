@@ -251,6 +251,167 @@ entries = {
         },
       });
       _expect(preDeny['decision'] == 'deny', 'PreToolUse denies raw ninja on dehydrated wt');
+
+      // 5. PreToolUse allows engine_build.dart-wrapped build on dehydrated wt
+      final preWrappedAllow = await runHook('pre', <String, dynamic>{
+        'conversationId': 'sess-9999',
+        'workspacePaths': <String>[tmp.path],
+        'toolCall': <String, dynamic>{
+          'name': 'run_command',
+          'args': <String, dynamic>{
+            'CommandLine':
+                'dart engine_build.dart --workspace feature-a -- et build -c host_debug_unopt',
+          },
+        },
+      });
+      _expect(
+        preWrappedAllow['decision'] == 'allow',
+        'PreToolUse allows engine_build.dart wrapped build on dehydrated wt',
+      );
+
+      // 6. PreToolUse denies foreign session --release / --dehydrate / rm out,
+      //    but allows owning session --release.
+      final preForeignRelease = await runHook('pre', <String, dynamic>{
+        'conversationId': 'sess-other',
+        'workspacePaths': <String>[tmp.path],
+        'toolCall': <String, dynamic>{
+          'name': 'run_command',
+          'args': <String, dynamic>{
+            'CommandLine':
+                'dart engine_build.dart --release --workspace feature-a',
+          },
+        },
+      });
+      _expect(
+        preForeignRelease['decision'] == 'deny',
+        'PreToolUse denies foreign session --release',
+      );
+
+      final preOwnRelease = await runHook('pre', <String, dynamic>{
+        'conversationId': 'sess-9999',
+        'workspacePaths': <String>[tmp.path],
+        'toolCall': <String, dynamic>{
+          'name': 'run_command',
+          'args': <String, dynamic>{
+            'CommandLine':
+                'dart engine_build.dart --release --workspace feature-a --session-id sess-9999',
+          },
+        },
+      });
+      _expect(
+        preOwnRelease['decision'] == 'allow',
+        'PreToolUse allows owning session --release',
+      );
+
+      // 7. PostToolUse does not steal foreign active lease or stamp on read-only commands
+      await runHook('post', <String, dynamic>{
+        'conversationId': 'sess-other',
+        'workspacePaths': <String>[tmp.path],
+        'toolCall': <String, dynamic>{
+          'name': 'edit_file',
+          'args': <String, dynamic>{
+            'Path': '${wt.path}/engine/src/flutter/impeller/a.cc',
+          },
+        },
+      });
+      final leaseAfterForeignEdit = readJsonMap('${wt.path}/.git/agent_session.json');
+      _expect(
+        leaseAfterForeignEdit?['sessionId'] == 'sess-9999',
+        'PostToolUse does not steal foreign active lease',
+      );
+
+      final wt2 = Directory('${tmp.path}/feature-b');
+      Directory('${wt2.path}/engine/src/flutter').createSync(recursive: true);
+      Directory('${wt2.path}/.git').createSync(recursive: true);
+      File('${wt2.path}/.git/HEAD').writeAsStringSync('ref: refs/heads/feature-b\n');
+      await runHook('post', <String, dynamic>{
+        'conversationId': 'sess-other',
+        'workspacePaths': <String>[tmp.path],
+        'toolCall': <String, dynamic>{
+          'name': 'run_command',
+          'args': <String, dynamic>{'CommandLine': 'git -C ${wt2.path} status'},
+        },
+      });
+      _expect(
+        readJsonMap('${wt2.path}/.git/agent_session.json') == null,
+        'PostToolUse ignores read-only run_command',
+      );
+    } finally {
+      tmp.deleteSync(recursive: true);
+    }
+  });
+
+  await asyncTest('engine_build.dart enforces lease ownership on --release and --dehydrate', () async {
+    final tmp = Directory.systemTemp.createTempSync('engine_build_owner_test_');
+    try {
+      final wt = Directory('${tmp.path}/feature-own');
+      Directory('${wt.path}/engine/src/flutter').createSync(recursive: true);
+      final initRes = await Process.run('git', <String>['init', wt.path]);
+      _expect(initRes.exitCode == 0, 'git init succeeded');
+
+      atomicWriteJson(
+        File('${wt.path}/.git/agent_session.json'),
+        <String, dynamic>{
+          'sessionId': 'owner-1',
+          'branch': 'main',
+          'state': 'busy',
+          'lastHeartbeat': DateTime.now().toUtc().toIso8601String(),
+        },
+      );
+
+      final engineBuildScript = File(
+        '${File(Platform.script.toFilePath()).parent.parent.path}/engine_build.dart',
+      ).resolveSymbolicLinksSync();
+
+      // Missing --session-id must fail.
+      final noSid = await Process.run(Platform.resolvedExecutable, <String>[
+        engineBuildScript,
+        '--release',
+        '--workspace',
+        wt.path,
+      ]);
+      _expect(noSid.exitCode != 0, '--release without --session-id rejected');
+
+      // Wrong --session-id must fail for both --release and --dehydrate.
+      final wrongSid = await Process.run(Platform.resolvedExecutable, <String>[
+        engineBuildScript,
+        '--release',
+        '--workspace',
+        wt.path,
+        '--session-id',
+        'intruder-2',
+      ]);
+      _expect(wrongSid.exitCode != 0, '--release by wrong session rejected');
+
+      final wrongDehydrate = await Process.run(
+        Platform.resolvedExecutable,
+        <String>[
+          engineBuildScript,
+          '--dehydrate',
+          '--dry-run',
+          '--workspace',
+          wt.path,
+          '--session-id',
+          'intruder-2',
+        ],
+      );
+      _expect(
+        wrongDehydrate.exitCode != 0,
+        '--dehydrate by wrong session rejected',
+      );
+
+      // Matching --session-id succeeds.
+      final rightSid = await Process.run(Platform.resolvedExecutable, <String>[
+        engineBuildScript,
+        '--release',
+        '--workspace',
+        wt.path,
+        '--session-id',
+        'owner-1',
+      ]);
+      _expect(rightSid.exitCode == 0, '--release by owner succeeds');
+      final released = readJsonMap('${wt.path}/.git/agent_session.json');
+      _expect(released?['state'] == 'released', 'Lease marked released');
     } finally {
       tmp.deleteSync(recursive: true);
     }

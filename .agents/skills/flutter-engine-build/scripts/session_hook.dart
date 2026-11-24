@@ -48,7 +48,7 @@ void main(List<String> args) {
   final out = switch (mode) {
     'post' => _handlePostToolUse(payload, sessionId),
     'stop' => _handleStop(payload, sessionId),
-    'pre' => _handlePreToolUse(payload),
+    'pre' => _handlePreToolUse(payload, sessionId),
     'pre-invocation' => _handlePreInvocation(payload),
     _ => const <String, dynamic>{},
   };
@@ -123,6 +123,71 @@ Object _extractToolInput(Map<String, dynamic> payload) {
       as Object;
 }
 
+String? _extractToolName(Map<String, dynamic> payload) {
+  final toolCall = payload['toolCall'];
+  if (toolCall is Map && toolCall['name'] is String) {
+    return toolCall['name'] as String;
+  }
+  return payload['toolName'] as String?;
+}
+
+String? _extractCommandLine(Map<String, dynamic> payload) {
+  final input = _extractToolInput(payload);
+  if (input is Map) {
+    final cmd = input['CommandLine'] ?? input['command'] ?? input['cmd'];
+    if (cmd is String) return cmd;
+  }
+  return null;
+}
+
+bool _isPidAlive(int pidToCheck) {
+  if (pidToCheck <= 0) return false;
+  if (Platform.isLinux) {
+    return Directory('/proc/$pidToCheck').existsSync();
+  }
+  final res = Process.runSync('kill', <String>['-0', '$pidToCheck']);
+  return res.exitCode == 0;
+}
+
+/// Returns the active [LeaseInfo] if [gitDir] is currently leased by a
+/// different session (live build PID or heartbeat within [idleMinutes] and not
+/// released). Returns `null` if unowned, owned by [sessionId], released, or
+/// expired.
+LeaseInfo? _foreignActiveLease(
+  Directory gitDir,
+  String sessionId, {
+  int idleMinutes = 60,
+}) {
+  final existing = readJsonMap('${gitDir.path}/agent_session.json');
+  if (existing == null) return null;
+  final lease = LeaseInfo.fromJson(existing);
+  final owner = lease.sessionId;
+  if (owner == null || owner.isEmpty || owner == sessionId) return null;
+  if (lease.state == 'released') return null;
+
+  final hasLivePid = lease.buildPid != null && _isPidAlive(lease.buildPid!);
+  final withinIdleWindow =
+      lease.lastHeartbeat != null &&
+      DateTime.now().difference(lease.lastHeartbeat!).inMinutes < idleMinutes;
+  if (hasLivePid || withinIdleWindow) {
+    return lease;
+  }
+  return null;
+}
+
+bool _isReadOnlyCommand(String cmd) {
+  final trimmed = cmd.trim();
+  if (trimmed.isEmpty) return true;
+  if (RegExp(
+    r'(--release|--dehydrate|--force|--clean-|--include-active|\b(rm|mv|cp|mkdir|touch|ninja|et|gclient|gn)\b|>>?|\bgit\b[^;&|]*\b(worktree\s+(add|remove)|checkout|commit|reset|apply|rebase|merge|cherry-pick|stash|clean|pull|push)\b)',
+  ).hasMatch(trimmed)) {
+    return false;
+  }
+  return RegExp(
+    r'(engine_build\.dart[^\n]*--status|audit_disk\.dart|check_worktrees\.dart|get_active_sessions\.dart|^(ls|du|df|cat|head|tail|stat|wc|file|pwd|echo)\b|\bgit\b[^;&|]*\b(status|log|branch|worktree\s+list|diff|show|rev-parse)\b)',
+  ).hasMatch(trimmed);
+}
+
 List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
   final found = <Directory>[];
   final seen = <String>{};
@@ -163,12 +228,14 @@ List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
         final name = baseName(entity.path);
         if (name.startsWith('.') || name == 'andywolff_skills') continue;
         final childStr = entity.path;
+        final escapedName = RegExp.escape(name);
         final matched =
             toolBlob.contains('$childStr/') ||
             toolBlob.contains('$childStr"') ||
             toolBlob.contains('$childStr ') ||
+            RegExp('(?:^|[\\s"\'=(])$escapedName/').hasMatch(toolBlob) ||
             RegExp(
-              '(?:^|[\\s"\'=(])${RegExp.escape(name)}/',
+              '--workspace[=\\s]+["\']?$escapedName(?:["\'\\s\\\\]|\\\$)',
             ).hasMatch(toolBlob);
         if (matched) {
           addIfWorktree(entity);
@@ -186,9 +253,17 @@ Map<String, dynamic> _handlePostToolUse(
   Map<String, dynamic> payload,
   String sessionId,
 ) {
+  final toolName = _extractToolName(payload);
+  final cmd = _extractCommandLine(payload);
+  if (toolName == 'run_command' && cmd != null && _isReadOnlyCommand(cmd)) {
+    return const <String, dynamic>{};
+  }
+
   for (final wt in _findCandidateWorktrees(payload)) {
     final gitDir = _resolveGitDir(wt);
     if (gitDir == null) continue;
+    // Never steal an active lease owned by another session.
+    if (_foreignActiveLease(gitDir, sessionId) != null) continue;
     final leaseFile = File('${gitDir.path}/agent_session.json');
     final existing = readJsonMap(leaseFile.path) ?? const <String, dynamic>{};
     final lease = <String, dynamic>{
@@ -294,9 +369,69 @@ Map<String, dynamic> _handleStop(
   return const <String, dynamic>{'decision': 'stop'};
 }
 
-Map<String, dynamic> _handlePreToolUse(Map<String, dynamic> payload) {
+Map<String, dynamic> _handlePreToolUse(
+  Map<String, dynamic> payload,
+  String sessionId,
+) {
   final toolBlob = jsonEncode(_extractToolInput(payload));
-  if (!RegExp(r'\b(ninja|et\s+build|gn\s+gen)\b').hasMatch(toolBlob)) {
+  final cmd = _extractCommandLine(payload) ?? toolBlob;
+
+  // 1. Block lease release, dehydration, or destructive cleanup of worktrees
+  // actively leased by another session.
+  final isLeaseMutation =
+      (cmd.contains('engine_build.dart') &&
+          RegExp(r'(--release|--dehydrate|--force)\b').hasMatch(cmd)) ||
+      (cmd.contains('audit_disk.dart') &&
+          RegExp(r'(--clean-|--include-active)\b').hasMatch(cmd)) ||
+      (RegExp(r'\brm\b').hasMatch(cmd) &&
+          RegExp(
+            r'(engine/src/out|\.gclient_entries|\.cipd|agent_session\.json)',
+          ).hasMatch(cmd)) ||
+      RegExp(r'\bgit\b[^\n]*\bworktree\s+remove\b').hasMatch(cmd);
+
+  if (isLeaseMutation) {
+    final targets = _findCandidateWorktrees(payload);
+    // If `--include-active` is passed to audit_disk.dart without scoping to a
+    // single workspace, check every sibling worktree under workspacePaths.
+    if (targets.isEmpty && cmd.contains('--include-active')) {
+      final rawWorkspaces = payload['workspacePaths'];
+      if (rawWorkspaces is List) {
+        for (final p in rawWorkspaces.whereType<String>()) {
+          final ws = Directory(p);
+          if (!ws.existsSync()) continue;
+          try {
+            for (final entity in ws.listSync(followLinks: false)) {
+              if (entity is Directory && _isFlutterWorktree(entity)) {
+                targets.add(entity);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    final denials = <String>[];
+    for (final wt in targets) {
+      final gitDir = _resolveGitDir(wt);
+      if (gitDir == null) continue;
+      final foreign = _foreignActiveLease(gitDir, sessionId);
+      if (foreign != null) {
+        final wtName = baseName(wt.path);
+        denials.add(
+          "Worktree '$wtName' is actively leased by session ${foreign.sessionId} (state=${foreign.state}). "
+          'You may not release, dehydrate, or clean a workspace owned by another session.',
+        );
+      }
+    }
+    if (denials.isNotEmpty) {
+      return <String, dynamic>{'decision': 'deny', 'reason': denials.join(' ')};
+    }
+  }
+
+  // 2. Block raw ninja / et build / gn gen on dehydrated or evicted worktrees
+  // unless already wrapped by engine_build.dart.
+  if (toolBlob.contains('engine_build.dart') ||
+      !RegExp(r'\b(ninja|et\s+build|gn\s+gen)\b').hasMatch(toolBlob)) {
     return const <String, dynamic>{'decision': 'allow'};
   }
 

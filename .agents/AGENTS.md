@@ -12,4 +12,5 @@
 
 ## Engine Builds & Disk Space Hygiene
 * **Use `flutter-engine-build` for Engine Compiles**: Run `et build`, `ninja`, and `gclient sync` through `engine_build.dart` (from the `flutter-engine-build` skill) so the 40 GB free-space floor, in-place dehydration/rehydration, and session leases stay synchronized across parallel worktrees.
-* **Release Lease When Done**: After engine builds/tests pass or a PR is pushed for review, run `engine_build.dart --release --workspace <name> --notify-waiters` so the worktree remains cached while space is plentiful but becomes immediately evictable if another session needs disk space.
+* **Release Own Lease When Done**: After engine builds/tests pass or a PR is pushed for review, run `engine_build.dart --release --workspace <name> --session-id <session-id> --notify-waiters` so the worktree remains cached while space is plentiful but becomes immediately evictable if another session needs disk space.
+* **Never Touch Another Session's Lease**: Never release, dehydrate, clean, or offer to release a worktree that you did not create or lease in the current session. When blocked by `HARD_ACTIVE` worktrees owned by other sessions, only wait/request handoff or report the blocking worktree names and session IDs to the user.

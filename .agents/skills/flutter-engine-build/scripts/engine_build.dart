@@ -59,6 +59,7 @@ Future<void> main(List<String> args) async {
   final jsonMode = wrapperArgs.contains('--json');
   final releaseMode = wrapperArgs.contains('--release');
   final dehydrateMode = wrapperArgs.contains('--dehydrate');
+  final forceMode = wrapperArgs.contains('--force');
   final dryRun = wrapperArgs.contains('--dry-run');
   final noRehydrate = wrapperArgs.contains('--no-rehydrate');
   final waitMode = wrapperArgs.contains('--wait');
@@ -102,6 +103,13 @@ Future<void> main(List<String> args) async {
       );
       exit(1);
     }
+    await _requireLeaseOwnership(
+      currentWorktreePath,
+      conversationId: conversationId,
+      idleMinutes: idleMinutes,
+      force: forceMode,
+      actionName: 'release',
+    );
     await _releaseLease(
       currentWorktreePath,
       parentDirPath,
@@ -119,6 +127,13 @@ Future<void> main(List<String> args) async {
       );
       exit(1);
     }
+    await _requireLeaseOwnership(
+      currentWorktreePath,
+      conversationId: conversationId,
+      idleMinutes: idleMinutes,
+      force: forceMode,
+      actionName: 'dehydrate',
+    );
     final reclaimedKiB = await _dehydrateWorktree(
       currentWorktreePath,
       byConversation: conversationId ?? 'manual',
@@ -446,7 +461,10 @@ Future<bool> _ensureDiskSpaceOrWait({
         }
         stderr.writeln('');
         stderr.writeln(
-          'Options: re-run with --wait (and --request-handoff with AGENT_NOTIFY_CMD configured), or release a workspace with `engine_build.dart --release --workspace <name>`.',
+          'Do NOT release, dehydrate, or offer to release workspaces owned by other sessions.',
+        );
+        stderr.writeln(
+          'Options: re-run with --wait (and --request-handoff with AGENT_NOTIFY_CMD configured), wait for an owning session to finish, or report these blocking workspaces and session IDs to the user.',
         );
       }
       return false;
@@ -587,6 +605,53 @@ Future<int> _dehydrateWorktree(
   }
 
   return totalReclaimedKiB;
+}
+
+Future<void> _requireLeaseOwnership(
+  String worktreePath, {
+  required String? conversationId,
+  required int idleMinutes,
+  required bool force,
+  required String actionName,
+}) async {
+  if (force) return;
+  final gitDir = await _resolveGitDir(worktreePath);
+  if (gitDir == null) return;
+  final lease = _readLease(gitDir);
+  final ownerId = lease.sessionId;
+  if (ownerId == null || ownerId.isEmpty) return;
+
+  final hasLivePid = lease.buildPid != null && _isPidAlive(lease.buildPid!);
+  final activeCids = await _loadActiveConversationIds();
+  final hasOpenSession = activeCids.contains(ownerId);
+  final liveness = classifyLiveness(
+    lease: lease,
+    hasLiveBuildPid: hasLivePid,
+    hasOpenSession: hasOpenSession,
+    hasActiveSessionInventory: activeCids.isNotEmpty,
+    idleMinutes: idleMinutes,
+  );
+
+  if (liveness != LivenessClass.hardActive &&
+      liveness != LivenessClass.softActive) {
+    return;
+  }
+
+  final wtName = baseName(worktreePath);
+  if (conversationId == null || conversationId.isEmpty) {
+    stderr.writeln(
+      'Error: Refusing to $actionName $wtName: it is currently ${liveness.name} and leased by session $ownerId. '
+      'Pass --session-id <your-session-id> (or set AGENT_SESSION_ID) to verify ownership; only the owning session may $actionName its own lease.',
+    );
+    exit(1);
+  }
+  if (conversationId != ownerId) {
+    stderr.writeln(
+      'Error: Refusing to $actionName $wtName: lease is owned by session $ownerId, not $conversationId. '
+      'Never $actionName a workspace owned by another session.',
+    );
+    exit(1);
+  }
 }
 
 Future<void> _releaseLease(
@@ -1154,5 +1219,6 @@ void _printUsage() {
   stdout.writeln('  --wait-timeout-min <n>      Max minutes to wait in --wait mode (default: 30).');
   stdout.writeln('  --request-handoff           Send handoff request to hard-active blockers via AGENT_NOTIFY_CMD.');
   stdout.writeln('  --notify-waiters            With --release, notify queued waiters via AGENT_NOTIFY_CMD.');
+  stdout.writeln('  --force                     Manual user override for lease ownership checks on --release / --dehydrate.');
   stdout.writeln('  --dry-run                   Preview evictions without deleting anything.');
 }
