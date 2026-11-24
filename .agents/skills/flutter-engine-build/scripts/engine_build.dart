@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'lib/workspace_utils.dart';
+
 /// Centralized Flutter engine build wrapper and disk-space admission gate.
 ///
 /// Enforces a minimum free disk floor (default 40 GB) via two-tier LRU
@@ -11,76 +13,6 @@ const _defaultMinFreeGiB = 40;
 const _defaultBuildHeadroomGiB = 10;
 const _defaultRehydrateHeadroomGiB = 25;
 const _defaultIdleMinutes = 60;
-
-const _standardBaseTargets = {
-  'host_debug',
-  'host_debug_arm64',
-  'host_debug_unopt',
-  'host_debug_unopt_arm64',
-  'host_profile',
-  'host_profile_arm64',
-  'host_release',
-  'host_release_arm64',
-  'linux_debug',
-  'linux_debug_arm64',
-  'linux_debug_unopt',
-  'linux_debug_unopt_arm64',
-  'linux_profile',
-  'linux_profile_arm64',
-  'linux_release',
-  'linux_release_arm64',
-  'android_debug',
-  'android_debug_arm64',
-  'android_debug_unopt',
-  'android_debug_unopt_arm64',
-  'android_profile',
-  'android_profile_arm64',
-  'android_release',
-  'android_release_arm64',
-};
-
-class LeaseInfo {
-  final String? conversationId;
-  final String? branch;
-  final String state; // busy | idle | released | unknown
-  final DateTime? lastHeartbeat;
-  final int? buildPid;
-
-  const LeaseInfo({
-    this.conversationId,
-    this.branch,
-    this.state = 'unknown',
-    this.lastHeartbeat,
-    this.buildPid,
-  });
-
-  factory LeaseInfo.fromJson(Map<String, dynamic> json) {
-    DateTime? parsedTime;
-    final rawTime = json['lastHeartbeat'] as String?;
-    if (rawTime != null && rawTime.isNotEmpty) {
-      parsedTime = DateTime.tryParse(rawTime);
-    }
-    return LeaseInfo(
-      conversationId:
-          (json['sessionId'] as String?) ?? (json['conversationId'] as String?),
-      branch: json['branch'] as String?,
-      state: (json['state'] as String?) ?? 'unknown',
-      lastHeartbeat: parsedTime,
-      buildPid: json['buildPid'] is int ? json['buildPid'] as int : null,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    if (conversationId != null) 'sessionId': conversationId,
-    if (branch != null) 'branch': branch,
-    'state': state,
-    if (lastHeartbeat != null)
-      'lastHeartbeat': lastHeartbeat!.toUtc().toIso8601String(),
-    if (buildPid != null) 'buildPid': buildPid,
-  };
-}
-
-enum LivenessClass { hardActive, softActive, released, inactive }
 
 class WorktreeState {
   final String name;
@@ -124,6 +56,7 @@ Future<void> main(List<String> args) async {
   }
 
   final statusMode = wrapperArgs.contains('--status');
+  final jsonMode = wrapperArgs.contains('--json');
   final releaseMode = wrapperArgs.contains('--release');
   final dehydrateMode = wrapperArgs.contains('--dehydrate');
   final dryRun = wrapperArgs.contains('--dry-run');
@@ -158,7 +91,7 @@ Future<void> main(List<String> args) async {
   );
 
   if (statusMode) {
-    await _runStatus(parentDirPath, minFreeGiB, idleMinutes);
+    await _runStatus(parentDirPath, minFreeGiB, idleMinutes, jsonMode: jsonMode);
     return;
   }
 
@@ -193,7 +126,7 @@ Future<void> main(List<String> args) async {
       dryRun: dryRun,
     );
     stdout.writeln(
-      '${dryRun ? "[DRY RUN] Would dehydrate" : "Dehydrated"} ${_baseName(currentWorktreePath)} (~${_formatKiB(reclaimedKiB)} estimated).',
+      '${dryRun ? "[DRY RUN] Would dehydrate" : "Dehydrated"} ${baseName(currentWorktreePath)} (~${formatKiB(reclaimedKiB)} estimated).',
     );
     return;
   }
@@ -221,7 +154,7 @@ Future<void> main(List<String> args) async {
       commandArgs[1] == 'sync';
 
   // 1. Check eviction tombstone and hydration status before running.
-  final evictionState = gitDir != null ? _readJsonFile('$gitDir/eviction_state.json') : null;
+  final evictionState = gitDir != null ? readJsonMap('$gitDir/eviction_state.json') : null;
   final hydrated = _isWorktreeHydrated(currentWorktreePath);
   final needsRehydrate = !hydrated && !isSyncCommand;
 
@@ -231,13 +164,13 @@ Future<void> main(List<String> args) async {
     final by = evictionState['byConversation'] ?? 'another session';
     final reclaimed = evictionState['reclaimedHuman'] ?? 'unknown size';
     stdout.writeln(
-      'Notice: ${_baseName(currentWorktreePath)} was $action at $at by $by (reclaimed $reclaimed).',
+      'Notice: ${baseName(currentWorktreePath)} was $action at $at by $by (reclaimed $reclaimed).',
     );
   }
 
   if (needsRehydrate && noRehydrate) {
     stderr.writeln(
-      'Error: ${_baseName(currentWorktreePath)} is currently dehydrated and --no-rehydrate was specified.',
+      'Error: ${baseName(currentWorktreePath)} is currently dehydrated and --no-rehydrate was specified.',
     );
     stderr.writeln('Run `gclient sync -D` (or omit --no-rehydrate) to rehydrate.');
     exit(3);
@@ -279,7 +212,7 @@ Future<void> main(List<String> args) async {
     _writeLease(
       gitDir,
       LeaseInfo(
-        conversationId: conversationId,
+        sessionId: conversationId,
         branch: branch,
         state: 'busy',
         lastHeartbeat: DateTime.now().toUtc(),
@@ -293,11 +226,11 @@ Future<void> main(List<String> args) async {
     // Auto-rehydrate if dehydrated.
     if (needsRehydrate) {
       stdout.writeln(
-        'Rehydrating ${_baseName(currentWorktreePath)} via `gclient sync -D`...',
+        'Rehydrating ${baseName(currentWorktreePath)} via `gclient sync -D`...',
       );
       final syncExit = await _streamCommand(
         'gclient',
-        ['sync', '-D'],
+        <String>['sync', '-D'],
         workingDirectory: currentWorktreePath,
       );
       if (syncExit != 0) {
@@ -325,7 +258,7 @@ Future<void> main(List<String> args) async {
       _writeLease(
         gitDir,
         LeaseInfo(
-          conversationId: conversationId,
+          sessionId: conversationId,
           branch: branch,
           state: 'idle',
           lastHeartbeat: DateTime.now().toUtc(),
@@ -356,7 +289,7 @@ Future<bool> _ensureDiskSpaceOrWait({
 }) async {
   final targetFreeGiB = minFreeGiB + headroomGiB;
   final deadline = DateTime.now().add(Duration(minutes: waitTimeoutMin));
-  var handoffSentTo = <String>{};
+  final handoffSentTo = <String>{};
 
   while (true) {
     final freeBeforeGiB = await _getFreeGiB(parentDirPath);
@@ -469,14 +402,14 @@ Future<bool> _ensureDiskSpaceOrWait({
       _registerWaiter(
         parentDirPath,
         conversationId: conversationId,
-        worktree: _baseName(currentWorktreePath),
+        worktree: baseName(currentWorktreePath),
         neededGiB: (targetFreeGiB - currentFreeGiB).ceil(),
       );
     }
 
     if (requestHandoff && !dryRun) {
       for (final b in blockers) {
-        final ownerCid = b.lease.conversationId;
+        final ownerCid = b.lease.sessionId;
         if (ownerCid == null ||
             ownerCid.isEmpty ||
             ownerCid == conversationId ||
@@ -486,7 +419,7 @@ Future<bool> _ensureDiskSpaceOrWait({
         await _sendHandoffRequest(
           targetConversationId: ownerCid,
           requesterConversationId: conversationId,
-          requesterWorktree: _baseName(currentWorktreePath),
+          requesterWorktree: baseName(currentWorktreePath),
           blockerWorktree: b.name,
           neededGiB: (targetFreeGiB - currentFreeGiB).ceil(),
           notifyCmd: notifyCmd,
@@ -505,10 +438,10 @@ Future<bool> _ensureDiskSpaceOrWait({
           'Remaining hydrated/built workspaces are Hard Active (< ${idleMinutes}m idle or live build):',
         );
         for (final b in blockers) {
-          final cid = b.lease.conversationId ?? 'unknown';
-          final age = _formatAge(b.lastUsed);
+          final cid = b.lease.sessionId ?? 'unknown';
+          final age = formatAge(b.lastUsed);
           stderr.writeln(
-            '  - ${b.name} (state=${b.lease.state}, lastUsed=$age, out=${_formatKiB(b.totalOutKiB)}, session=$cid)',
+            '  - ${b.name} (state=${b.lease.state}, lastUsed=$age, out=${formatKiB(b.totalOutKiB)}, session=$cid)',
           );
         }
         stderr.writeln('');
@@ -549,7 +482,7 @@ Future<double> _evictOutTargets(
       if (freeGiB >= targetFreeGiB) break;
       final giB = t.sizeKiB / (1024 * 1024);
       stdout.writeln(
-        '${dryRun ? "[DRY RUN] Would delete" : "Deleting"} ${ws.name}/engine/src/out/${t.name} (${_formatKiB(t.sizeKiB)})...',
+        '${dryRun ? "[DRY RUN] Would delete" : "Deleting"} ${ws.name}/engine/src/out/${t.name} (${formatKiB(t.sizeKiB)})...',
       );
       if (!dryRun) {
         final dir = Directory(t.path);
@@ -561,7 +494,7 @@ Future<double> _evictOutTargets(
             ws.gitDir!,
             action: 'evicted_out',
             byConversation: byConversation,
-            previousOwner: ws.lease.conversationId,
+            previousOwner: ws.lease.sessionId,
             previousBranch: ws.lease.branch,
             reclaimedKiB: t.sizeKiB,
             detail: 'engine/src/out/${t.name}',
@@ -595,16 +528,8 @@ Future<int> _dehydrateWorktree(
     'engine/src/flutter/prebuilts/linux-arm64',
   };
 
-  if (_safeExists(entriesFile)) {
-    final content = entriesFile.readAsStringSync();
-    final keyRegex = RegExp(r"""['"]([^'"]+)['"]\s*:""");
-    for (final match in keyRegex.allMatches(content)) {
-      final raw = match.group(1)!;
-      final rel = raw.split(':').first.replaceAll(RegExp(r'^/+|/+$'), '');
-      if (rel.isNotEmpty && rel != '.') {
-        paths.add(rel);
-      }
-    }
+  if (safeExists(entriesFile)) {
+    paths.addAll(parseGclientEntries(entriesFile.readAsStringSync()));
   }
 
   var totalReclaimedKiB = 0;
@@ -645,7 +570,7 @@ Future<int> _dehydrateWorktree(
   }
 
   if (!dryRun) {
-    if (_safeExists(entriesFile)) {
+    if (safeExists(entriesFile)) {
       entriesFile.deleteSync();
     }
     if (gitDir != null) {
@@ -653,7 +578,7 @@ Future<int> _dehydrateWorktree(
         gitDir,
         action: 'dehydrated',
         byConversation: byConversation,
-        previousOwner: lease.conversationId,
+        previousOwner: lease.sessionId,
         previousBranch: lease.branch,
         reclaimedKiB: totalReclaimedKiB,
         detail: reason,
@@ -681,7 +606,7 @@ Future<void> _releaseLease(
   _writeLease(
     gitDir,
     LeaseInfo(
-      conversationId: conversationId ?? existing.conversationId,
+      sessionId: conversationId ?? existing.sessionId,
       branch: branch,
       state: 'released',
       lastHeartbeat: DateTime.now().toUtc(),
@@ -689,7 +614,7 @@ Future<void> _releaseLease(
     ),
   );
   stdout.writeln(
-    'Released lease on ${_baseName(worktreePath)} (now immediately evictable if another build needs space).',
+    'Released lease on ${baseName(worktreePath)} (now immediately evictable if another build needs space).',
   );
 
   if (notifyWaiters) {
@@ -700,7 +625,7 @@ Future<void> _releaseLease(
       if (cid == null || cid.isEmpty || cid == conversationId) continue;
       await _sendAgentMessage(
         cid,
-        'Lease released on ${_baseName(worktreePath)}; disk space can now be reclaimed if your build is waiting.',
+        'Lease released on ${baseName(worktreePath)}; disk space can now be reclaimed if your build is waiting.',
         notifyCmd: notifyCmd,
       );
     }
@@ -710,9 +635,40 @@ Future<void> _releaseLease(
 Future<void> _runStatus(
   String parentDirPath,
   int minFreeGiB,
-  int idleMinutes,
-) async {
+  int idleMinutes, {
+  required bool jsonMode,
+}) async {
   final freeGiB = await _getFreeGiB(parentDirPath);
+  final worktrees = await _scanWorktrees(parentDirPath, idleMinutes);
+  final waiters = _readWaiters(parentDirPath);
+
+  if (jsonMode) {
+    final payload = <String, dynamic>{
+      'freeGiB': double.parse(freeGiB.toStringAsFixed(2)),
+      'minFreeGiB': minFreeGiB,
+      'belowFloor': freeGiB < minFreeGiB,
+      'idleMinutes': idleMinutes,
+      'worktrees': worktrees
+          .map(
+            (w) => <String, dynamic>{
+              'name': w.name,
+              'path': w.path,
+              'hydrated': w.isHydrated,
+              'liveness': w.liveness.name,
+              'lease': w.lease.toJson(),
+              'totalOutKiB': w.totalOutKiB,
+              'totalOutHuman': formatKiB(w.totalOutKiB),
+              'lastUsed': w.lastUsed.toUtc().toIso8601String(),
+              if (w.evictionState != null) 'evictionState': w.evictionState,
+            },
+          )
+          .toList(),
+      'waiters': waiters,
+    };
+    stdout.writeln(const JsonEncoder.withIndent('  ').convert(payload));
+    return;
+  }
+
   final status = freeGiB >= minFreeGiB ? 'OK' : 'BELOW FLOOR';
   stdout.writeln('=== Flutter Engine Build Disk Status ===');
   stdout.writeln(
@@ -720,7 +676,6 @@ Future<void> _runStatus(
   );
   stdout.writeln('');
 
-  final worktrees = await _scanWorktrees(parentDirPath, idleMinutes);
   stdout.writeln('=== Worktrees ===');
   for (final w in worktrees) {
     final hydration = w.isHydrated ? 'HYDRATED' : 'DEHYDRATED';
@@ -731,26 +686,26 @@ Future<void> _runStatus(
       LivenessClass.inactive => 'INACTIVE',
     };
     final outSummary = w.totalOutKiB > 0
-        ? 'out=${_formatKiB(w.totalOutKiB)}'
+        ? 'out=${formatKiB(w.totalOutKiB)}'
         : 'out=0B';
-    final owner = w.lease.conversationId != null
-        ? ' owner=${w.lease.conversationId!.substring(0, w.lease.conversationId!.length < 8 ? w.lease.conversationId!.length : 8)}'
+    final ownerId = w.lease.sessionId;
+    final owner = ownerId != null
+        ? ' owner=${ownerId.substring(0, ownerId.length < 8 ? ownerId.length : 8)}'
         : '';
     final evicted = w.evictionState != null
         ? ' [EVICTED: ${w.evictionState!['action']}]'
         : '';
     stdout.writeln(
-      '  ${w.name.padRight(32)} ${hydration.padRight(11)} ${live.padRight(12)} ${outSummary.padRight(12)} (${_formatAge(w.lastUsed)})$owner$evicted',
+      '  ${w.name.padRight(32)} ${hydration.padRight(11)} ${live.padRight(12)} ${outSummary.padRight(12)} (${formatAge(w.lastUsed)})$owner$evicted',
     );
   }
 
-  final waiters = _readWaiters(parentDirPath);
   if (waiters.isNotEmpty) {
     stdout.writeln('');
     stdout.writeln('=== Space Waiters ===');
     for (final w in waiters) {
       stdout.writeln(
-        '  - ${w['worktree']} (conversation=${w['conversationId']}, needed=${w['neededGiB']}G, since=${w['since']})',
+        '  - ${w['worktree']} (session=${w['sessionId'] ?? w['conversationId']}, needed=${w['neededGiB']}G, since=${w['since']})',
       );
     }
   }
@@ -766,15 +721,15 @@ Future<List<WorktreeState>> _scanWorktrees(
   final now = DateTime.now();
 
   for (final dir in dirs) {
-    final name = _baseName(dir.path);
+    final name = baseName(dir.path);
     if (name == 'andywolff_skills' || name.startsWith('.')) continue;
     final gitDir = await _resolveGitDir(dir.path);
     if (gitDir == null) continue;
     // Only include Flutter repo worktrees.
-    if (!_safeExists(Directory('${dir.path}/engine/src/flutter'))) continue;
+    if (!safeExists(Directory('${dir.path}/engine/src/flutter'))) continue;
 
     final lease = _readLease(gitDir);
-    final evictionState = _readJsonFile('$gitDir/eviction_state.json');
+    final evictionState = readJsonMap('$gitDir/eviction_state.json');
     final isHydrated = _isWorktreeHydrated(dir.path);
     final hasLivePid =
         lease.buildPid != null && _isPidAlive(lease.buildPid!);
@@ -785,14 +740,14 @@ Future<List<WorktreeState>> _scanWorktrees(
     DateTime lastUsed = lease.lastHeartbeat ?? _dirModified(dir);
 
     for (final target in _safeListDirs(outDir)) {
-      final tName = _baseName(target.path);
+      final tName = baseName(target.path);
       final kib = await _measureDirKiB(target.path);
       if (kib > 0) {
         outTargets.add((
           name: tName,
           path: target.path,
           sizeKiB: kib,
-          isSnapshot: _isSnapshotDir(target, tName),
+          isSnapshot: isSnapshotDir(target, tName),
         ));
       }
       final tMod = _dirModified(target);
@@ -800,25 +755,15 @@ Future<List<WorktreeState>> _scanWorktrees(
     }
 
     final hasOpenSession =
-        lease.conversationId != null &&
-        activeCids.contains(lease.conversationId);
-    final withinIdleWindow =
-        lease.lastHeartbeat != null &&
-        now.difference(lease.lastHeartbeat!).inMinutes < idleMinutes;
-
-    final LivenessClass liveness;
-    if (hasLivePid || (lease.state == 'busy' && withinIdleWindow)) {
-      liveness = LivenessClass.hardActive;
-    } else if (lease.state == 'released') {
-      liveness = LivenessClass.released;
-    } else if (withinIdleWindow &&
-        (activeCids.isEmpty || hasOpenSession)) {
-      liveness = LivenessClass.hardActive;
-    } else if (hasOpenSession) {
-      liveness = LivenessClass.softActive;
-    } else {
-      liveness = LivenessClass.inactive;
-    }
+        lease.sessionId != null && activeCids.contains(lease.sessionId);
+    final liveness = classifyLiveness(
+      lease: lease,
+      hasLiveBuildPid: hasLivePid,
+      hasOpenSession: hasOpenSession,
+      hasActiveSessionInventory: activeCids.isNotEmpty,
+      idleMinutes: idleMinutes,
+      now: now,
+    );
 
     results.add(
       WorktreeState(
@@ -840,8 +785,8 @@ Future<List<WorktreeState>> _scanWorktrees(
 }
 
 bool _isWorktreeHydrated(String worktreePath) {
-  return _safeExists(File('$worktreePath/.gclient_entries')) ||
-      _safeExists(Directory('$worktreePath/engine/src/flutter/third_party/skia'));
+  return safeExists(File('$worktreePath/.gclient_entries')) ||
+      safeExists(Directory('$worktreePath/engine/src/flutter/third_party/skia'));
 }
 
 bool _isPidAlive(int pidToCheck) {
@@ -943,14 +888,12 @@ void _registerWaiter(
     'neededGiB': neededGiB,
     'since': DateTime.now().toUtc().toIso8601String(),
   });
-  try {
-    file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(waiters));
-  } catch (_) {}
+  atomicWriteJson(file, waiters);
 }
 
 void _removeWaiter(String parentDirPath, String conversationId) {
   final file = File('$parentDirPath/.flutter_space_waiters.json');
-  if (!_safeExists(file)) return;
+  if (!safeExists(file)) return;
   final waiters = _readWaiters(parentDirPath)
     ..removeWhere(
       (w) =>
@@ -961,36 +904,30 @@ void _removeWaiter(String parentDirPath, String conversationId) {
     if (waiters.isEmpty) {
       file.deleteSync();
     } else {
-      file.writeAsStringSync(
-        const JsonEncoder.withIndent('  ').convert(waiters),
-      );
+      atomicWriteJson(file, waiters);
     }
-  } catch (_) {}
+  } catch (_) {
+    // Best-effort cleanup of waiter file.
+  }
 }
 
 List<Map<String, dynamic>> _readWaiters(String parentDirPath) {
-  final file = File('$parentDirPath/.flutter_space_waiters.json');
-  if (!_safeExists(file)) return [];
-  try {
-    final decoded = jsonDecode(file.readAsStringSync());
-    if (decoded is List) {
-      return decoded.whereType<Map<String, dynamic>>().toList();
-    }
-  } catch (_) {}
-  return [];
+  final decoded = readJsonDynamic(
+    File('$parentDirPath/.flutter_space_waiters.json'),
+  );
+  if (decoded is List) {
+    return decoded.whereType<Map<String, dynamic>>().toList();
+  }
+  return <Map<String, dynamic>>[];
 }
 
 LeaseInfo _readLease(String gitDir) {
-  final json = _readJsonFile('$gitDir/agent_session.json');
+  final json = readJsonMap('$gitDir/agent_session.json');
   return json != null ? LeaseInfo.fromJson(json) : const LeaseInfo();
 }
 
 void _writeLease(String gitDir, LeaseInfo lease) {
-  try {
-    File(
-      '$gitDir/agent_session.json',
-    ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(lease.toJson()));
-  } catch (_) {}
+  atomicWriteJson(File('$gitDir/agent_session.json'), lease.toJson());
 }
 
 void _writeEvictionState(
@@ -1002,38 +939,26 @@ void _writeEvictionState(
   required int reclaimedKiB,
   required String detail,
 }) {
-  try {
-    final payload = {
-      'action': action,
-      'at': DateTime.now().toUtc().toIso8601String(),
-      'byConversation': byConversation,
-      if (previousOwner != null) 'previousOwner': previousOwner,
-      if (previousBranch != null) 'previousBranch': previousBranch,
-      'reclaimedKiB': reclaimedKiB,
-      'reclaimedHuman': _formatKiB(reclaimedKiB),
-      'detail': detail,
-    };
-    File('$gitDir/eviction_state.json').writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert(payload),
-    );
-  } catch (_) {}
-}
-
-Map<String, dynamic>? _readJsonFile(String path) {
-  final f = File(path);
-  if (!_safeExists(f)) return null;
-  try {
-    final decoded = jsonDecode(f.readAsStringSync());
-    if (decoded is Map<String, dynamic>) return decoded;
-  } catch (_) {}
-  return null;
+  final payload = <String, dynamic>{
+    'action': action,
+    'at': DateTime.now().toUtc().toIso8601String(),
+    'byConversation': byConversation,
+    if (previousOwner != null) 'previousOwner': previousOwner,
+    if (previousBranch != null) 'previousBranch': previousBranch,
+    'reclaimedKiB': reclaimedKiB,
+    'reclaimedHuman': formatKiB(reclaimedKiB),
+    'detail': detail,
+  };
+  atomicWriteJson(File('$gitDir/eviction_state.json'), payload);
 }
 
 void _deleteFileIfExists(String path) {
   try {
     final f = File(path);
     if (f.existsSync()) f.deleteSync();
-  } catch (_) {}
+  } catch (_) {
+    // Best-effort file removal.
+  }
 }
 
 Future<int> _streamCommand(
@@ -1056,19 +981,22 @@ Future<String?> _resolveTargetWorktree(
 ) async {
   if (workspaceArg != null && workspaceArg.isNotEmpty) {
     final direct = Directory(workspaceArg);
-    if (_safeExists(direct)) {
+    if (safeExists(direct)) {
       return direct.resolveSymbolicLinksSync();
     }
     final sibling = Directory('$parentDirPath/$workspaceArg');
-    if (_safeExists(sibling)) {
+    if (safeExists(sibling)) {
       return sibling.resolveSymbolicLinksSync();
     }
     return null;
   }
-  final topRes = await _runSystemCmd('git', ['rev-parse', '--show-toplevel']);
+  final topRes = await _runSystemCmd('git', <String>[
+    'rev-parse',
+    '--show-toplevel',
+  ]);
   if (topRes != null && topRes.exitCode == 0) {
     final top = (topRes.stdout as String).trim();
-    if (top.isNotEmpty && _safeExists(Directory('$top/engine/src/flutter'))) {
+    if (top.isNotEmpty && safeExists(Directory('$top/engine/src/flutter'))) {
       return top;
     }
   }
@@ -1076,7 +1004,7 @@ Future<String?> _resolveTargetWorktree(
 }
 
 Future<String?> _resolveGitDir(String worktreePath) async {
-  final res = await _runSystemCmd('git', [
+  final res = await _runSystemCmd('git', <String>[
     '-C',
     worktreePath,
     'rev-parse',
@@ -1090,7 +1018,7 @@ Future<String?> _resolveGitDir(String worktreePath) async {
 }
 
 Future<String?> _resolveBranch(String worktreePath) async {
-  final res = await _runSystemCmd('git', [
+  final res = await _runSystemCmd('git', <String>[
     '-C',
     worktreePath,
     'branch',
@@ -1106,10 +1034,13 @@ Future<String?> _resolveBranch(String worktreePath) async {
 Future<String> _detectParentDir(String? workspaceArg) async {
   if (workspaceArg != null &&
       workspaceArg.contains('/') &&
-      _safeExists(Directory(workspaceArg))) {
+      safeExists(Directory(workspaceArg))) {
     return Directory(workspaceArg).parent.path;
   }
-  final gitTop = await _runSystemCmd('git', ['rev-parse', '--show-toplevel']);
+  final gitTop = await _runSystemCmd('git', <String>[
+    'rev-parse',
+    '--show-toplevel',
+  ]);
   if (gitTop != null && gitTop.exitCode == 0) {
     final topPath = (gitTop.stdout as String).trim();
     if (topPath.isNotEmpty) {
@@ -1124,12 +1055,12 @@ Future<String> _detectParentDir(String? workspaceArg) async {
 
 Future<double> _getFreeGiB(String path) async {
   final target =
-      Platform.isMacOS && _safeExists(Directory('/System/Volumes/Data'))
+      Platform.isMacOS && safeExists(Directory('/System/Volumes/Data'))
       ? '/System/Volumes/Data'
-      : _safeExists(Directory(path))
+      : safeExists(Directory(path))
       ? path
       : '/';
-  final res = await _runSystemCmd('df', ['-Pk', target]);
+  final res = await _runSystemCmd('df', <String>['-Pk', target]);
   if (res == null || res.exitCode != 0) return 0;
   final lines = (res.stdout as String).trim().split('\n');
   if (lines.length < 2) return 0;
@@ -1140,7 +1071,7 @@ Future<double> _getFreeGiB(String path) async {
 }
 
 Future<int> _measureDirKiB(String path) async {
-  final res = await _runSystemCmd('du', ['-sk', path]);
+  final res = await _runSystemCmd('du', <String>['-sk', path]);
   if (res == null || res.exitCode != 0) return 0;
   final raw = (res.stdout as String).trim();
   if (raw.isEmpty) return 0;
@@ -1152,7 +1083,7 @@ Future<ProcessResult?> _runSystemCmd(
   List<String> args, {
   String? workingDirectory,
 }) async {
-  for (final candidate in [cmd, '/usr/bin/$cmd', '/bin/$cmd']) {
+  for (final candidate in <String>[cmd, '/usr/bin/$cmd', '/bin/$cmd']) {
     try {
       return await Process.run(
         candidate,
@@ -1166,46 +1097,32 @@ Future<ProcessResult?> _runSystemCmd(
   return null;
 }
 
-bool _isSnapshotDir(Directory dir, String name) {
-  try {
-    if (File('${dir.path}/.snapshot_variant').existsSync()) return true;
-  } catch (_) {}
-  if (_standardBaseTargets.contains(name)) return false;
-  return _standardBaseTargets.any((base) => name.startsWith('${base}_'));
-}
-
 DateTime _dirModified(Directory dir) {
   var newest = DateTime.fromMillisecondsSinceEpoch(0);
   void consider(FileSystemEntity e) {
     try {
       final m = e.statSync().modified;
       if (m.isAfter(newest)) newest = m;
-    } catch (_) {}
+    } catch (_) {
+      // Ignore unreadable entries when computing modified timestamp.
+    }
   }
 
   consider(dir);
-  for (final marker in ['.ninja_log', 'build.ninja', 'args.gn']) {
+  for (final marker in const <String>['.ninja_log', 'build.ninja', 'args.gn']) {
     final f = File('${dir.path}/$marker');
-    if (_safeExists(f)) consider(f);
+    if (safeExists(f)) consider(f);
   }
   return newest;
 }
 
-bool _safeExists(FileSystemEntity e) {
-  try {
-    return e.existsSync();
-  } catch (_) {
-    return false;
-  }
-}
-
 List<Directory> _safeListDirs(Directory dir) {
   try {
-    if (!dir.existsSync()) return const [];
+    if (!dir.existsSync()) return const <Directory>[];
     return dir.listSync(followLinks: false).whereType<Directory>().toList()
       ..sort((a, b) => a.path.compareTo(b.path));
   } catch (_) {
-    return const [];
+    return const <Directory>[];
   }
 }
 
@@ -1213,28 +1130,6 @@ String? _getOption(List<String> args, String flag) {
   final idx = args.indexOf(flag);
   if (idx != -1 && idx + 1 < args.length) return args[idx + 1];
   return null;
-}
-
-String _baseName(String path) =>
-    path.split('/').where((s) => s.isNotEmpty).lastOrNull ?? path;
-
-String _formatKiB(int kib) {
-  if (kib <= 0) return '0B';
-  const mib = 1024;
-  const gib = 1024 * 1024;
-  if (kib >= gib) return '${(kib / gib).toStringAsFixed(1)}G';
-  if (kib >= mib) return '${(kib / mib).round()}M';
-  return '${kib}K';
-}
-
-String _formatAge(DateTime modified) {
-  final diff = DateTime.now().difference(modified);
-  if (diff.isNegative || diff.inMinutes < 60) {
-    final mins = diff.inMinutes < 1 ? 1 : diff.inMinutes;
-    return '${mins}m ago';
-  }
-  if (diff.inHours < 48) return '${diff.inHours}h ago';
-  return '${diff.inDays}d ago';
 }
 
 void _printUsage() {
@@ -1246,6 +1141,7 @@ void _printUsage() {
   stdout.writeln('  --dehydrate                 Safely dehydrate target worktree (removes untracked gclient deps + out/).');
   stdout.writeln('');
   stdout.writeln('Options:');
+  stdout.writeln('  --json                      With --status, output machine-readable JSON.');
   stdout.writeln('  --workspace <name|path>     Target Flutter worktree (defaults to git toplevel of cwd).');
   stdout.writeln('  --parent-dir <path>         Parent directory containing sibling worktrees.');
   stdout.writeln('  --session-id <id>           Current agent session ID for lease tracking.');

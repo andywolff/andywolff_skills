@@ -1,0 +1,6 @@
+name: flutter_engine_build_scripts
+description: Helper scripts and lifecycle hook for the flutter-engine-build skill.
+publish_to: none
+
+environment:
+  sdk: ^3.5.0

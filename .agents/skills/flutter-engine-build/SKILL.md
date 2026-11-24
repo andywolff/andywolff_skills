@@ -6,7 +6,8 @@ description: >-
   floor via two-tier LRU eviction (engine/src/out then in-place gclient
   dehydration), protects hard-active workspaces (1-hour idle window), handles
   automatic rehydration with eviction notices, and supports lease release and
-  cross-session handoff.
+  cross-session handoff. Don't use for framework-only flutter test runs, pure
+  Git branch operations, or general OS disk cleanup outside Flutter worktrees.
 ---
 
 # Flutter Engine Build & Space Manager
@@ -23,6 +24,9 @@ queued space waiters:
 
 ```sh
 dart .agents/skills/flutter-engine-build/scripts/engine_build.dart --status
+
+# Machine-readable JSON output:
+dart .agents/skills/flutter-engine-build/scripts/engine_build.dart --status --json
 ```
 
 ## 2. Run Engine Builds Through the Admission Gate
@@ -104,7 +108,22 @@ dart compile exe \
 ```
 
 Then merge [hooks.json.example](hooks.json.example) into your agent's
-`hooks.json` configuration. The hook automatically stamps
-`<gitdir>/agent_session.json`, flips state from `busy` to `idle` on turn
-completion, warns if a worktree was dehydrated, and notifies queued waiters via
-`AGENT_NOTIFY_CMD` (if configured) when a turn finishes.
+`hooks.json` configuration. The hook runs on `PreInvocation` (surfacing
+dehydration notices without interfering with tool permissions), `PostToolUse`
+(stamping `<gitdir>/agent_session.json`), and `Stop` (flipping `busy` to `idle`
+and optionally notifying queued waiters via `AGENT_NOTIFY_CMD`).
+
+## 7. Verification
+
+Preview the admission gate without deleting files, analyze the scripts, or run
+the unit test suite:
+
+```sh
+# Dry-run eviction preview:
+dart .agents/skills/flutter-engine-build/scripts/engine_build.dart \
+  --workspace my-branch --dry-run -- et build -c host_debug_unopt
+
+# Static analysis and unit tests:
+dart analyze .agents/skills/flutter-engine-build/scripts/
+dart .agents/skills/flutter-engine-build/scripts/test/flutter_engine_build_test.dart
+```

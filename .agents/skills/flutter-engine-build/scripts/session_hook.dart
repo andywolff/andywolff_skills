@@ -1,18 +1,22 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'lib/workspace_utils.dart';
 
 /// Generic agent lifecycle hook for Flutter worktree session leases.
 ///
 /// Compile to a native binary for low-latency hook execution (~10-20ms):
 ///   dart compile exe scripts/session_hook.dart -o ~/.cache/flutter_engine_build/session_hook
 ///
-/// Handles `post` (PostToolUse), `stop` (Stop), and `pre` (PreToolUse) events
-/// to maintain `<gitdir>/agent_session.json` without dirtying git status,
-/// surface dehydration/eviction notices, and optionally notify queued space
-/// waiters via `AGENT_NOTIFY_CMD`.
+/// Handles `post` (PostToolUse), `stop` (Stop), `pre-invocation`
+/// (PreInvocation), and `pre` (PreToolUse) events to maintain
+/// `<gitdir>/agent_session.json` without dirtying git status, surface
+/// dehydration/eviction notices, and optionally notify queued space waiters
+/// via `AGENT_NOTIFY_CMD`.
 void main(List<String> args) {
   final mode = args.isNotEmpty ? args.first : 'post';
-  Map<String, dynamic> payload = const {};
+  Map<String, dynamic> payload = const <String, dynamic>{};
   try {
     final raw = _readAllStdin();
     if (raw.trim().isNotEmpty) {
@@ -21,13 +25,23 @@ void main(List<String> args) {
         payload = decoded;
       }
     }
-  } catch (_) {}
+  } catch (_) {
+    // Ignore malformed hook payloads and fall back to a safe no-op response.
+  }
 
   final sessionId =
       (payload['sessionId'] as String?) ??
       (payload['conversationId'] as String?);
   if (sessionId == null || sessionId.isEmpty) {
-    stdout.writeln('{}');
+    stdout.writeln(
+      jsonEncode(
+        mode == 'pre'
+            ? const <String, dynamic>{'decision': 'allow'}
+            : mode == 'stop'
+            ? const <String, dynamic>{'decision': 'stop'}
+            : const <String, dynamic>{},
+      ),
+    );
     return;
   }
 
@@ -35,6 +49,7 @@ void main(List<String> args) {
     'post' => _handlePostToolUse(payload, sessionId),
     'stop' => _handleStop(payload, sessionId),
     'pre' => _handlePreToolUse(payload),
+    'pre-invocation' => _handlePreInvocation(payload),
     _ => const <String, dynamic>{},
   };
 
@@ -79,7 +94,9 @@ Directory? _resolveGitDir(Directory worktree) {
           return Directory(resolved.resolveSymbolicLinksSync());
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      return null;
+    }
   }
   return null;
 }
@@ -91,29 +108,20 @@ String? _readBranch(Directory gitDir) {
     if (head.startsWith(prefix)) {
       return head.substring(prefix.length);
     }
-  } catch (_) {}
+  } catch (_) {
+    // Detached HEAD or unreadable HEAD file.
+  }
   return null;
 }
 
-dynamic _readJson(File file) {
-  if (!file.existsSync()) return null;
-  try {
-    return jsonDecode(file.readAsStringSync());
-  } catch (_) {
-    return null;
+Object _extractToolInput(Map<String, dynamic> payload) {
+  final toolCall = payload['toolCall'];
+  if (toolCall is Map && toolCall['args'] != null) {
+    return toolCall['args'] as Object;
   }
+  return (payload['toolInput'] ?? payload['args'] ?? const <String, dynamic>{})
+      as Object;
 }
-
-void _writeJson(File file, Map<String, dynamic> data) {
-  try {
-    file.writeAsStringSync(
-      '${const JsonEncoder.withIndent('  ').convert(data)}\n',
-    );
-  } catch (_) {}
-}
-
-String _baseName(String path) =>
-    path.split('/').where((s) => s.isNotEmpty).lastOrNull ?? path;
 
 List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
   final found = <Directory>[];
@@ -128,7 +136,9 @@ List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
         seen.add(resolved.path);
         found.add(resolved);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Skip inaccessible directories.
+    }
   }
 
   final rawWorkspaces = payload['workspacePaths'];
@@ -141,8 +151,7 @@ List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
     addIfWorktree(ws);
   }
 
-  final toolInput = payload['toolInput'] ?? payload['args'] ?? const {};
-  var toolBlob = jsonEncode(toolInput);
+  var toolBlob = jsonEncode(_extractToolInput(payload));
   // Strip SDK binary invocations so calling flutter/bin/dart does not claim flutter/.
   toolBlob = toolBlob.replaceAll(RegExp(r'flutter/bin/(dart|flutter)\b'), '');
 
@@ -151,7 +160,7 @@ List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
     try {
       for (final entity in ws.listSync(followLinks: false)) {
         if (entity is! Directory) continue;
-        final name = _baseName(entity.path);
+        final name = baseName(entity.path);
         if (name.startsWith('.') || name == 'andywolff_skills') continue;
         final childStr = entity.path;
         final matched =
@@ -165,7 +174,9 @@ List<Directory> _findCandidateWorktrees(Map<String, dynamic> payload) {
           addIfWorktree(entity);
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      // Skip unreadable parent directories.
+    }
   }
 
   return found;
@@ -179,20 +190,17 @@ Map<String, dynamic> _handlePostToolUse(
     final gitDir = _resolveGitDir(wt);
     if (gitDir == null) continue;
     final leaseFile = File('${gitDir.path}/agent_session.json');
-    final existing = _readJson(leaseFile);
-    final existingMap = existing is Map<String, dynamic>
-        ? existing
-        : const <String, dynamic>{};
+    final existing = readJsonMap(leaseFile.path) ?? const <String, dynamic>{};
     final lease = <String, dynamic>{
       'sessionId': sessionId,
-      'branch': _readBranch(gitDir) ?? existingMap['branch'],
+      'branch': _readBranch(gitDir) ?? existing['branch'],
       'state': 'busy',
       'lastHeartbeat': _nowIso(),
-      if (existingMap['buildPid'] is int) 'buildPid': existingMap['buildPid'],
+      if (existing['buildPid'] is int) 'buildPid': existing['buildPid'],
     };
-    _writeJson(leaseFile, lease);
+    atomicWriteJson(leaseFile, lease);
   }
-  return const {};
+  return const <String, dynamic>{};
 }
 
 Map<String, dynamic> _handleStop(
@@ -213,8 +221,8 @@ Map<String, dynamic> _handleStop(
     final gitDir = _resolveGitDir(wt);
     if (gitDir == null) return;
     final leaseFile = File('${gitDir.path}/agent_session.json');
-    final existing = _readJson(leaseFile);
-    if (existing is! Map<String, dynamic>) return;
+    final existing = readJsonMap(leaseFile.path);
+    if (existing == null) return;
     final owner =
         (existing['sessionId'] as String?) ??
         (existing['conversationId'] as String?);
@@ -223,8 +231,8 @@ Map<String, dynamic> _handleStop(
       existing['state'] = 'idle';
       existing['lastHeartbeat'] = _nowIso();
       existing.remove('buildPid');
-      _writeJson(leaseFile, existing);
-      updatedWorktrees.add(_baseName(wt.path));
+      atomicWriteJson(leaseFile, existing);
+      updatedWorktrees.add(baseName(wt.path));
       checkedParents.add(wt.parent.path);
     }
   }
@@ -237,11 +245,13 @@ Map<String, dynamic> _handleStop(
       checkedParents.add(ws.path);
       try {
         for (final entity in ws.listSync(followLinks: false)) {
-          if (entity is Directory && !_baseName(entity.path).startsWith('.')) {
+          if (entity is Directory && !baseName(entity.path).startsWith('.')) {
             maybeFlipIdle(entity);
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Skip unreadable parent directories.
+      }
     }
   }
 
@@ -253,7 +263,9 @@ Map<String, dynamic> _handleStop(
         ? sessionId.substring(0, 8)
         : sessionId;
     for (final parentPath in checkedParents) {
-      final waiters = _readJson(File('$parentPath/.flutter_space_waiters.json'));
+      final waiters = readJsonDynamic(
+        File('$parentPath/.flutter_space_waiters.json'),
+      );
       if (waiters is! List) continue;
       for (final w in waiters.whereType<Map<String, dynamic>>()) {
         final targetId =
@@ -265,36 +277,39 @@ Map<String, dynamic> _handleStop(
             'Turn finished for session $shortId on ${updatedWorktrees.join(', ')}. '
             'If you are still blocked on disk space, check `engine_build.dart --status` or request release.';
         try {
-          Process.start(
-            'sh',
-            ['-c', '$notifyCmd "\$1" "\$2"', '_', targetId, msg],
-            mode: ProcessStartMode.detached,
+          unawaited(
+            Process.start(
+              'sh',
+              <String>['-c', '$notifyCmd "\$1" "\$2"', '_', targetId, msg],
+              mode: ProcessStartMode.detached,
+            ),
           );
-        } catch (_) {}
+        } catch (_) {
+          // Best-effort notification.
+        }
       }
     }
   }
 
-  return const {};
+  return const <String, dynamic>{'decision': 'stop'};
 }
 
 Map<String, dynamic> _handlePreToolUse(Map<String, dynamic> payload) {
-  final toolInput = payload['toolInput'] ?? payload['args'] ?? const {};
-  final toolBlob = jsonEncode(toolInput);
+  final toolBlob = jsonEncode(_extractToolInput(payload));
   if (!RegExp(r'\b(ninja|et\s+build|gn\s+gen)\b').hasMatch(toolBlob)) {
-    return const {};
+    return const <String, dynamic>{'decision': 'allow'};
   }
 
   final warnings = <String>[];
   for (final wt in _findCandidateWorktrees(payload)) {
     final gitDir = _resolveGitDir(wt);
     if (gitDir == null) continue;
-    final eviction = _readJson(File('${gitDir.path}/eviction_state.json'));
-    if (eviction is Map<String, dynamic>) {
+    final eviction = readJsonMap('${gitDir.path}/eviction_state.json');
+    if (eviction != null) {
       final action = eviction['action'] ?? 'evicted';
       final at = eviction['at'] ?? 'unknown time';
       final reclaimed = eviction['reclaimedHuman'] ?? 'unknown size';
-      final wtName = _baseName(wt.path);
+      final wtName = baseName(wt.path);
       warnings.add(
         "Worktree '$wtName' was $action at $at (reclaimed $reclaimed). "
         'Use `engine_build.dart --workspace $wtName -- <cmd>` to rehydrate and enforce the 40G disk floor.',
@@ -303,7 +318,42 @@ Map<String, dynamic> _handlePreToolUse(Map<String, dynamic> payload) {
   }
 
   if (warnings.isNotEmpty) {
-    return {'systemMessage': warnings.join(' ')};
+    return <String, dynamic>{'decision': 'deny', 'reason': warnings.join(' ')};
   }
-  return const {};
+  return const <String, dynamic>{'decision': 'allow'};
+}
+
+Map<String, dynamic> _handlePreInvocation(Map<String, dynamic> payload) {
+  final rawWorkspaces = payload['workspacePaths'];
+  final workspacePaths = <Directory>[
+    if (rawWorkspaces is List)
+      for (final p in rawWorkspaces.whereType<String>()) Directory(p),
+  ];
+  final warnings = <String>[];
+  for (final ws in workspacePaths) {
+    if (!ws.existsSync() || !_isFlutterWorktree(ws)) continue;
+    final gitDir = _resolveGitDir(ws);
+    if (gitDir == null) continue;
+    final eviction = readJsonMap('${gitDir.path}/eviction_state.json');
+    if (eviction != null) {
+      final action = eviction['action'] ?? 'evicted';
+      final at = eviction['at'] ?? 'unknown time';
+      final reclaimed = eviction['reclaimedHuman'] ?? 'unknown size';
+      final wtName = baseName(ws.path);
+      warnings.add(
+        "Worktree '$wtName' was $action at $at (reclaimed $reclaimed). "
+        'Use `engine_build.dart --workspace $wtName -- <cmd>` to rehydrate before building.',
+      );
+    }
+  }
+  if (warnings.isEmpty) return const <String, dynamic>{};
+  return <String, dynamic>{
+    'injectSteps': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'systemMessage': <String, dynamic>{
+          'systemMessage': warnings.join(' '),
+        },
+      },
+    ],
+  };
 }
