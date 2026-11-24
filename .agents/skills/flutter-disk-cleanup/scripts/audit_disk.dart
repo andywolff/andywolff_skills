@@ -8,7 +8,9 @@ class CleanupItem {
   final int sizeKiB;
   final String humanSize;
   final bool hasActiveSession;
+  final List<String> inferredSessions;
   final bool isSnapshot;
+  final DateTime? lastModified;
 
   const CleanupItem({
     required this.category,
@@ -17,8 +19,13 @@ class CleanupItem {
     required this.sizeKiB,
     required this.humanSize,
     this.hasActiveSession = false,
+    this.inferredSessions = const [],
     this.isSnapshot = false,
+    this.lastModified,
   });
+
+  bool get isProtectedSession =>
+      hasActiveSession || inferredSessions.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
     'category': category,
@@ -27,7 +34,10 @@ class CleanupItem {
     'sizeKiB': sizeKiB,
     'humanSize': humanSize,
     'hasActiveSession': hasActiveSession,
+    'inferredSessions': inferredSessions,
     'isSnapshot': isSnapshot,
+    if (lastModified != null)
+      'lastModified': lastModified!.toUtc().toIso8601String(),
   };
 }
 
@@ -40,6 +50,14 @@ const _standardBaseTargets = {
   'host_profile_arm64',
   'host_release',
   'host_release_arm64',
+  'linux_debug',
+  'linux_debug_arm64',
+  'linux_debug_unopt',
+  'linux_debug_unopt_arm64',
+  'linux_profile',
+  'linux_profile_arm64',
+  'linux_release',
+  'linux_release_arm64',
   'android_debug',
   'android_debug_arm64',
   'android_debug_unopt',
@@ -72,11 +90,10 @@ Future<void> main(List<String> args) async {
   final parentDirPath =
       _getOption(args, '--parent-dir') ?? await _detectParentDir();
 
-  final activeWorkspaces = await _loadActiveWorkspacePaths();
   final items = <CleanupItem>[];
 
   if (!jsonMode) {
-    final dfBefore = await _getDiskSummary();
+    final dfBefore = await _getDiskSummary(parentDirPath);
     stdout.writeln('=== Disk Status ===');
     stdout.writeln(dfBefore);
     stdout.writeln('');
@@ -84,6 +101,10 @@ Future<void> main(List<String> args) async {
 
   // 1. Scan workspaces for engine builds and framework test/example builds.
   final workspaceDirs = await _discoverWorkspaces(parentDirPath);
+  final activeState = await _loadActiveSessionState(
+    parentDirPath,
+    workspaceDirs,
+  );
   var inaccessibleWorkspaces = 0;
   for (final ws in workspaceDirs) {
     final wsName = _baseName(ws.path);
@@ -95,7 +116,15 @@ Future<void> main(List<String> args) async {
       inaccessibleWorkspaces++;
       continue;
     }
-    final isActive = activeWorkspaces.contains(ws.path);
+    final leaseBadge = await _readWorktreeLeaseBadge(ws.path);
+    final isReleasedLease = leaseBadge == 'RELEASED';
+    final isActive =
+        !isReleasedLease &&
+        (activeState.directPaths.contains(ws.path) ||
+            (leaseBadge != null && leaseBadge.startsWith('LEASE:')));
+    final inferredOwners = isReleasedLease
+        ? const <String>[]
+        : (activeState.inferredOwners[ws.path] ?? const <String>[]);
 
     // Engine out targets
     final outDir = Directory('${ws.path}/engine/src/out');
@@ -112,7 +141,9 @@ Future<void> main(List<String> args) async {
             sizeKiB: size.kib,
             humanSize: size.human,
             hasActiveSession: isActive,
+            inferredSessions: inferredOwners,
             isSnapshot: _isSnapshotDir(target, targetName),
+            lastModified: _getLastModified(target),
           ),
         );
       }
@@ -139,6 +170,8 @@ Future<void> main(List<String> args) async {
               sizeKiB: size.kib,
               humanSize: size.human,
               hasActiveSession: isActive,
+              inferredSessions: inferredOwners,
+              lastModified: _getLastModified(buildDir),
             ),
           );
         }
@@ -150,22 +183,30 @@ Future<void> main(List<String> args) async {
   if (workspaceFilters == null) {
     final home = Platform.environment['HOME'] ?? '';
     if (home.isNotEmpty) {
+      final xdgCache = Platform.environment['XDG_CACHE_HOME'];
+      final linuxCacheHome = (xdgCache != null && xdgCache.isNotEmpty)
+          ? xdgCache
+          : '$home/.cache';
       final cacheTargets = [
         (
           cat: 'cache',
           label: 'VS Code C++ IntelliSense Cache',
-          path: '$home/Library/Caches/vscode-cpptools',
+          path: Platform.isMacOS
+              ? '$home/Library/Caches/vscode-cpptools'
+              : '$linuxCacheHome/vscode-cpptools',
         ),
-        (
-          cat: 'cache',
-          label: 'Xcode iOS DeviceSupport Symbols',
-          path: '$home/Library/Developer/Xcode/iOS DeviceSupport',
-        ),
-        (
-          cat: 'cache',
-          label: 'Xcode DerivedData',
-          path: '$home/Library/Developer/Xcode/DerivedData',
-        ),
+        if (Platform.isMacOS) ...[
+          (
+            cat: 'cache',
+            label: 'Xcode iOS DeviceSupport Symbols',
+            path: '$home/Library/Developer/Xcode/iOS DeviceSupport',
+          ),
+          (
+            cat: 'cache',
+            label: 'Xcode DerivedData',
+            path: '$home/Library/Developer/Xcode/DerivedData',
+          ),
+        ],
         (
           cat: 'cache',
           label: 'Dart Analysis Server Cache',
@@ -224,6 +265,12 @@ Future<void> main(List<String> args) async {
     );
   }
 
+  if (!jsonMode && activeState.sessionDetectionUnavailable) {
+    stdout.writeln(
+      'Note: Active Jetski session detection is unavailable (presence directory not accessible, e.g. inside a sandbox); re-run outside the sandbox to populate session badges.\n',
+    );
+  }
+
   if (!anyCleanRequested) {
     _printAuditReport(items);
     return;
@@ -237,23 +284,24 @@ Future<void> main(List<String> args) async {
     final shouldDelete = switch (item.category) {
       'engine_out' =>
         (cleanEngineOut || (cleanSnapshots && item.isSnapshot)) &&
-            (!item.hasActiveSession || includeActive),
+            (!item.isProtectedSession || includeActive),
       'framework_build' =>
-        cleanFrameworkBuilds && (!item.hasActiveSession || includeActive),
+        cleanFrameworkBuilds && (!item.isProtectedSession || includeActive),
       'cache' => cleanCaches,
       'gradle' => cleanGradle,
       _ => false,
     };
 
-    if (item.hasActiveSession &&
+    if (item.isProtectedSession &&
         !includeActive &&
         (cleanEngineOut || cleanSnapshots || cleanFrameworkBuilds)) {
       if ((item.category == 'engine_out' &&
               (cleanEngineOut || (cleanSnapshots && item.isSnapshot))) ||
           (item.category == 'framework_build' && cleanFrameworkBuilds)) {
-        stdout.writeln(
-          '⏭️  Skipping active session workspace target: ${item.label}',
-        );
+        final reason = item.hasActiveSession
+            ? 'active session'
+            : 'inferred active session (${item.inferredSessions.join(', ')})';
+        stdout.writeln('⏭️  Skipping $reason workspace target: ${item.label}');
       }
       continue;
     }
@@ -282,7 +330,7 @@ Future<void> main(List<String> args) async {
   );
   stdout.writeln('');
   stdout.writeln('=== Updated Disk Status ===');
-  stdout.writeln(await _getDiskSummary());
+  stdout.writeln(await _getDiskSummary(parentDirPath));
 }
 
 void _printAuditReport(List<CleanupItem> items) {
@@ -293,9 +341,15 @@ void _printAuditReport(List<CleanupItem> items) {
     final totalKiB = sorted.fold<int>(0, (sum, item) => sum + item.sizeKiB);
     stdout.writeln('=== $title (~${_formatKiB(totalKiB)}) ===');
     for (final item in sorted) {
+      final age = item.lastModified != null
+          ? '(${_formatAge(item.lastModified!)})'
+          : '';
       final badges = <String>[
+        if (age.isNotEmpty) age,
         if (item.isSnapshot) '[SNAPSHOT]',
         if (item.hasActiveSession) '[ACTIVE SESSION]',
+        if (!item.hasActiveSession && item.inferredSessions.isNotEmpty)
+          '[INFERRED ACTIVE: ${item.inferredSessions.join('; ')}]',
       ].join(' ');
       final suffix = badges.isEmpty ? '' : ' $badges';
       stdout.writeln('  ${item.humanSize.padLeft(6)}  ${item.label}$suffix');
@@ -475,10 +529,30 @@ Future<String> _detectParentDir() async {
   final resolvedScript = File(Platform.script.toFilePath())
       .resolveSymbolicLinksSync();
   // <parent>/andywolff_skills/.agents/skills/flutter-disk-cleanup/scripts/audit_disk.dart
-  return File(resolvedScript).parent.parent.parent.parent.parent.path;
+  return File(resolvedScript).parent.parent.parent.parent.parent.parent.path;
 }
 
-Future<Set<String>> _loadActiveWorkspacePaths() async {
+Future<
+  ({
+    Set<String> directPaths,
+    Map<String, List<String>> inferredOwners,
+    bool sessionDetectionUnavailable,
+  })
+>
+_loadActiveSessionState(
+  String parentDirPath,
+  List<Directory> workspaceDirs,
+) async {
+  final home = Platform.environment['HOME'] ?? '';
+  final presenceDir = Directory('$home/.gemini/jetski/presence');
+  if (home.isEmpty || !_safeExists(presenceDir)) {
+    return (
+      directPaths: <String>{},
+      inferredOwners: <String, List<String>>{},
+      sessionDetectionUnavailable: true,
+    );
+  }
+
   try {
     final resolvedScript = File(Platform.script.toFilePath())
         .resolveSymbolicLinksSync();
@@ -486,20 +560,223 @@ Future<Set<String>> _loadActiveWorkspacePaths() async {
     final activeScript =
         '$skillsRoot/git-worktree-management/scripts/get_active_sessions.dart';
     if (!File(activeScript).existsSync()) {
-      return {};
+      return (
+        directPaths: <String>{},
+        inferredOwners: <String, List<String>>{},
+        sessionDetectionUnavailable: false,
+      );
     }
     final result = await Process.run(Platform.resolvedExecutable, [
       activeScript,
       '--json',
     ]);
     if (result.exitCode != 0) {
-      return {};
+      return (
+        directPaths: <String>{},
+        inferredOwners: <String, List<String>>{},
+        sessionDetectionUnavailable: false,
+      );
     }
-    final decoded = jsonDecode(result.stdout as String) as Map<String, dynamic>;
-    return decoded.keys.toSet();
+    final decoded = jsonDecode(result.stdout as String);
+    final directPaths = <String>{};
+    final inferredMap = <String, Set<String>>{};
+    final normalizedParent = parentDirPath.replaceAll(RegExp(r'/+$'), '');
+
+    if (decoded is List) {
+      for (final entry in decoded.whereType<Map<String, dynamic>>()) {
+        final wsPath = (entry['workspacePath'] as String?)?.replaceAll(
+          RegExp(r'/+$'),
+          '',
+        );
+        if (wsPath == null || wsPath.isEmpty) continue;
+        directPaths.add(wsPath);
+
+        if (wsPath == normalizedParent) {
+          final cid = entry['conversationId'] as String?;
+          final title = (entry['title'] as String?)?.trim();
+          if (cid == null || cid.isEmpty) continue;
+          final label = (title != null && title.isNotEmpty)
+              ? title
+              : cid.substring(0, cid.length < 8 ? cid.length : 8);
+          final transcript = File(
+            '$home/.gemini/jetski/brain/$cid/.system_generated/logs/transcript.jsonl',
+          );
+          if (!_safeExists(transcript)) continue;
+          final owned = _inferWorktreesFromTranscript(
+            transcript,
+            normalizedParent,
+            workspaceDirs,
+          );
+          for (final ownedPath in owned) {
+            inferredMap.putIfAbsent(ownedPath, () => <String>{}).add(label);
+          }
+        }
+      }
+    } else if (decoded is Map<String, dynamic>) {
+      directPaths.addAll(decoded.keys);
+    }
+
+    return (
+      directPaths: directPaths,
+      inferredOwners: {
+        for (final e in inferredMap.entries) e.key: (e.value.toList()..sort()),
+      },
+      sessionDetectionUnavailable: false,
+    );
   } catch (_) {
-    return {};
+    return (
+      directPaths: <String>{},
+      inferredOwners: <String, List<String>>{},
+      sessionDetectionUnavailable: false,
+    );
   }
+}
+
+Set<String> _inferWorktreesFromTranscript(
+  File transcriptFile,
+  String parentDirPath,
+  List<Directory> workspaceDirs,
+) {
+  final candidates = <String, String>{};
+  for (final dir in workspaceDirs) {
+    final normalized = dir.path.replaceAll(RegExp(r'/+$'), '');
+    if (normalized == parentDirPath) continue;
+    final name = _baseName(normalized);
+    if (name.isEmpty || name == 'andywolff_skills') continue;
+    candidates[name] = normalized;
+  }
+  if (candidates.isEmpty) return const {};
+
+  final hitCounts = <String, int>{};
+  final writeHits = <String>{};
+
+  try {
+    final lines = transcriptFile.readAsLinesSync();
+    for (final line in lines) {
+      if (!line.contains('"tool_calls"')) continue;
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(line);
+      } catch (_) {
+        continue;
+      }
+      if (decoded is! Map<String, dynamic>) continue;
+      final toolCalls = decoded['tool_calls'];
+      if (toolCalls is! List) continue;
+
+      for (final tc in toolCalls.whereType<Map<String, dynamic>>()) {
+        final name = (tc['name'] as String?) ?? '';
+        final args = tc['args'];
+        if (args is! Map) continue;
+        final isWriteTool =
+            name == 'edit_file' ||
+            name == 'write_file' ||
+            name == 'replace_file_content' ||
+            name == 'multi_replace_file_content';
+
+        final rawText = args.values.whereType<String>().join(' ');
+        if (rawText.isEmpty) continue;
+        // Strip SDK binary invocations so calling flutter/bin/dart does not claim the flutter worktree.
+        final sanitized = rawText
+            .replaceAll('$parentDirPath/flutter/bin/dart', '')
+            .replaceAll('$parentDirPath/flutter/bin/flutter', '')
+            .replaceAll('flutter/bin/dart', '')
+            .replaceAll('flutter/bin/flutter', '');
+
+        for (final entry in candidates.entries) {
+          final wsName = entry.key;
+          final wsPath = entry.value;
+          final absPrefix = '$parentDirPath/$wsName';
+          final matched =
+              sanitized.contains('$absPrefix/') ||
+              sanitized.contains('$absPrefix"') ||
+              sanitized.contains("$absPrefix'") ||
+              sanitized.contains('$absPrefix ') ||
+              RegExp(
+                '(?:^|[\\s"\'=\\(])${RegExp.escape(wsName)}/',
+              ).hasMatch(sanitized);
+          if (matched) {
+            hitCounts[wsPath] = (hitCounts[wsPath] ?? 0) + 1;
+            if (isWriteTool) {
+              writeHits.add(wsPath);
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {
+    return const {};
+  }
+
+  return {
+    for (final entry in hitCounts.entries)
+      if (entry.value >= 2 || writeHits.contains(entry.key)) entry.key,
+  };
+}
+
+DateTime? _getLastModified(Directory dir) {
+  DateTime? newest;
+  void consider(FileSystemEntity entity) {
+    try {
+      final mod = entity.statSync().modified;
+      if (newest == null || mod.isAfter(newest!)) {
+        newest = mod;
+      }
+    } catch (_) {}
+  }
+
+  consider(dir);
+  for (final marker in ['.ninja_log', 'build.ninja', 'args.gn']) {
+    final f = File('${dir.path}/$marker');
+    if (_safeExists(f)) consider(f);
+  }
+  return newest;
+}
+
+String _formatAge(DateTime modified) {
+  final diff = DateTime.now().difference(modified);
+  if (diff.isNegative || diff.inMinutes < 60) {
+    final mins = diff.inMinutes < 1 ? 1 : diff.inMinutes;
+    return '${mins}m ago';
+  }
+  if (diff.inHours < 48) {
+    return '${diff.inHours}h ago';
+  }
+  return '${diff.inDays}d ago';
+}
+
+Future<String?> _readWorktreeLeaseBadge(String worktreePath) async {
+  final gitRes = await _runSystemCmd('git', [
+    '-C',
+    worktreePath,
+    'rev-parse',
+    '--absolute-git-dir',
+  ]);
+  if (gitRes == null || gitRes.exitCode != 0) return null;
+  final gitDir = (gitRes.stdout as String).trim();
+  if (gitDir.isEmpty) return null;
+  final leaseFile = File('$gitDir/agent_session.json');
+  if (!_safeExists(leaseFile)) return null;
+  try {
+    final decoded = jsonDecode(leaseFile.readAsStringSync());
+    if (decoded is! Map<String, dynamic>) return null;
+    final state = (decoded['state'] as String?) ?? 'unknown';
+    if (state == 'released') return 'RELEASED';
+    final rawHb = decoded['lastHeartbeat'] as String?;
+    final hb = rawHb != null ? DateTime.tryParse(rawHb) : null;
+    final buildPid = decoded['buildPid'];
+    final hasLivePid =
+        buildPid is int &&
+        buildPid > 0 &&
+        (Platform.isLinux
+            ? Directory('/proc/$buildPid').existsSync()
+            : Process.runSync('kill', ['-0', '$buildPid']).exitCode == 0);
+    if (hasLivePid) return 'LEASE:busy';
+    if (hb != null && DateTime.now().difference(hb).inMinutes < 60) {
+      return 'LEASE:$state';
+    }
+  } catch (_) {}
+  return null;
 }
 
 Future<({int kib, String human})> _measureDir(String path) async {
@@ -528,10 +805,15 @@ String _formatKiB(int kib) {
   return '${kib}K';
 }
 
-Future<String> _getDiskSummary() async {
+Future<String> _getDiskSummary([String? targetPath]) async {
+  final home = Platform.environment['HOME'];
   final target =
       Platform.isMacOS && _safeExists(Directory('/System/Volumes/Data'))
       ? '/System/Volumes/Data'
+      : (targetPath != null && _safeExists(Directory(targetPath)))
+      ? targetPath
+      : (home != null && home.isNotEmpty && _safeExists(Directory(home)))
+      ? home
       : '/';
   final res = await _runSystemCmd('df', ['-h', target]);
   if (res == null) return 'Unable to query disk summary.';

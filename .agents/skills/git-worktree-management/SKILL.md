@@ -156,6 +156,20 @@ To resolve this, run the symlinking script from the
 ```
 For more details, see the [manage-personal-skills](../manage-personal-skills/SKILL.md) skill.
 
+### Session Lease Marker Fallback
+
+If the `flutter-engine-build` lifecycle hook (`session_hook.dart`) is not
+installed, stamp `<gitdir>/agent_session.json` when creating or claiming a
+worktree (and release it with `engine_build.dart --release` when done) so
+disk-space eviction never dehydrates an actively used workspace:
+
+```sh
+GIT_DIR=$(git -C <worktree-path> rev-parse --absolute-git-dir)
+printf '{"sessionId":"%s","branch":"%s","state":"busy","lastHeartbeat":"%s"}\n' \
+  "<session-id>" "$(git -C <worktree-path> branch --show-current)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  > "$GIT_DIR/agent_session.json"
+```
+
 ## 5. Bootstrapping gclient in a Worktree
 
 When using Git worktrees for engine/framework development, the `.gclient`

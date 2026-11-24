@@ -26,13 +26,15 @@ dart .agents/skills/personal-flutter-disk-cleanup/scripts/audit_disk.dart
 ```
 
 The script automatically:
-- Reports free and used capacity on `/System/Volumes/Data` (or `/`).
+- Reports free and used capacity on `/System/Volumes/Data` (macOS) or the
+  filesystem backing the workspace directory (Linux).
 - Measures `engine/src/out/*` targets across all sibling workspaces and flags
   snapshot copies (`[SNAPSHOT]`) and active Jetski agent workspaces
   (`[ACTIVE SESSION]`).
 - Totals `build/` directories (>= 10 MiB) inside `dev/integration_tests`,
   `dev/benchmarks`, and `examples`.
-- Checks developer caches (`vscode-cpptools`, `Xcode iOS DeviceSupport`,
+- Checks developer caches (`vscode-cpptools` in `~/Library/Caches` on macOS or
+  `$XDG_CACHE_HOME`/`~/.cache` on Linux, macOS `Xcode iOS DeviceSupport` and
   `Xcode DerivedData`, `~/.dartServer`, and `~/.gradle`) plus informational
   footprints like `~/.android/avd`.
 

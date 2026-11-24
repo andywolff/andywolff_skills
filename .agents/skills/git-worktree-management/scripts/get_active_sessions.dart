@@ -51,16 +51,65 @@ Future<Map<String, List<SessionInfo>>> getActiveJetskiSessions() async {
   }
 
   // 2. Query workspace URIs and metadata from conversation_summaries.db
-  final idList = conversationPids.keys.map((id) => "'$id'").join(',');
-  final sql =
-      'SELECT conversation_id, title, workspace_uris FROM conversation_summaries WHERE conversation_id IN ($idList);';
-
-  final sqliteResult = await Process.run('sqlite3', [dbFile.path, '-json', sql]);
-  if (sqliteResult.exitCode != 0) {
+  final jsonRows = await _queryConversationSummariesJson(
+    dbFile.path,
+    conversationPids.keys.toList(),
+  );
+  if (jsonRows == null) {
     return {};
   }
 
-  return parseSqliteSessions(sqliteResult.stdout as String, conversationPids);
+  return parseSqliteSessions(jsonRows, conversationPids);
+}
+
+Future<String?> _queryConversationSummariesJson(
+  String dbPath,
+  List<String> conversationIds,
+) async {
+  if (conversationIds.isEmpty) return '[]';
+
+  try {
+    final idList = conversationIds
+        .map((id) => "'${id.replaceAll("'", "''")}'")
+        .join(',');
+    final sql =
+        'SELECT conversation_id, title, workspace_uris FROM conversation_summaries WHERE conversation_id IN ($idList);';
+    final sqliteResult = await Process.run('sqlite3', [dbPath, '-json', sql]);
+    if (sqliteResult.exitCode == 0) {
+      return sqliteResult.stdout as String;
+    }
+  } on ProcessException {
+    // Fall through to python3 fallback when sqlite3 CLI is not installed.
+  }
+
+  try {
+    const pyScript = '''
+import json, sqlite3, sys
+db_path = sys.argv[1]
+ids = sys.argv[2:]
+placeholders = ",".join("?" for _ in ids)
+conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+conn.row_factory = sqlite3.Row
+cur = conn.execute(
+    f"SELECT conversation_id, title, workspace_uris FROM conversation_summaries WHERE conversation_id IN ({placeholders})",
+    ids,
+)
+print(json.dumps([dict(row) for row in cur.fetchall()]))
+''';
+    final pyResult = await Process.run('python3', [
+      '-c',
+      pyScript,
+      dbPath,
+      ...conversationIds,
+    ]);
+    if (pyResult.exitCode == 0) {
+      return pyResult.stdout as String;
+    }
+  } on ProcessException {
+    return null;
+  }
+
+  return null;
 }
 
 /// Parses the output of `lsof -F pn` to extract locked conversation IDs and their PIDs.
